@@ -6,6 +6,7 @@ const dataDir = path.resolve(__dirname, '..', 'data');
 const dbFile = path.join(dataDir, 'store.db');
 const legacyDataFile = path.join(dataDir, 'store.json');
 const DEFAULT_SITE_NAME = '简易自动发卡平台';
+const dbExistedBeforeOpen = fs.existsSync(dbFile);
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -250,6 +251,15 @@ function setSetting(key, value) {
     key,
     String(value)
   );
+}
+
+function ensureDatabaseReady() {
+  return {
+    dataDir,
+    dbFile,
+    exists: fs.existsSync(dbFile),
+    createdOnBoot: !dbExistedBeforeOpen,
+  };
 }
 
 function mapProductRow(row) {
@@ -873,6 +883,7 @@ module.exports = {
   listOrdersPaged,
   deleteOrderByNo,
   cleanupUnpaidOrdersOlderThan,
+  ensureDatabaseReady,
   getSiteName,
   setSiteName,
   getPaymentConfig,

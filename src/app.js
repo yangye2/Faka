@@ -22,6 +22,7 @@ const {
   listOrdersPaged,
   deleteOrderByNo,
   cleanupUnpaidOrdersOlderThan,
+  ensureDatabaseReady,
   getSiteName,
   setSiteName,
   getPaymentConfig,
@@ -651,9 +652,15 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
+  const dbInfo = ensureDatabaseReady();
   console.log(`Simple Faka running: http://localhost:${PORT}`);
   console.log(`Admin backend: http://localhost:${PORT}/admin/login`);
   console.log(`Default admin: ${ADMIN_USER} / ${ADMIN_PASS}`);
+  if (dbInfo.createdOnBoot) {
+    console.log(`SQLite database created: ${dbInfo.dbFile}`);
+  } else {
+    console.log(`SQLite database ready: ${dbInfo.dbFile}`);
+  }
   if (PAYMENT_DEBUG) {
     console.log('Payment debug logs: ENABLED (PAYMENT_DEBUG=true)');
   }
