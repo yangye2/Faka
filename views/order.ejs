@@ -65,15 +65,18 @@
               <a class="link-btn pay-link-large" id="payNowBtn" href="<%= order.pay_url %>" target="_blank" rel="noopener">前往支付</a>
             </p>
             <p class="paying-tip is-hidden" id="payingTip">支付中，正在自动查询支付状态，请稍候...</p>
-            <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form pay-check-wrap is-hidden" id="payCheckForm">
-              <button type="submit">我已支付，点击查单</button>
+            <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form pay-check-wrap" id="payCheckForm">
+              <button type="submit" id="payCheckBtn" disabled>我已支付，点击查单</button>
             </form>
+            <p class="muted" id="payCheckHint">请先点击“前往支付”，再点击“我已支付，点击查单”。</p>
             <script>
               (function () {
                 var payBtn = document.getElementById('payNowBtn');
                 var checkForm = document.getElementById('payCheckForm');
+                var checkBtn = document.getElementById('payCheckBtn');
+                var checkHint = document.getElementById('payCheckHint');
                 var tipNode = document.getElementById('payingTip');
-                if (!payBtn || !checkForm || !tipNode) return;
+                if (!payBtn || !checkForm || !checkBtn || !tipNode) return;
 
                 var key = 'pay_opened_<%= order.order_no %>';
                 var startKey = 'pay_poll_started_at_<%= order.order_no %>';
@@ -82,8 +85,11 @@
                 var pollStartedAt = 0;
                 var maxDurationMs = 3 * 60 * 1000;
 
-                function showCheckForm() {
-                  checkForm.classList.remove('is-hidden');
+                function enableCheckButton() {
+                  checkBtn.disabled = false;
+                  if (checkHint) {
+                    checkHint.classList.add('is-hidden');
+                  }
                 }
 
                 function showTip(text) {
@@ -113,7 +119,7 @@
                         }, 600);
                         return;
                       }
-                      showTip('支付中，当前状态：' + (data.payStateText || '处理中') + '。系统会继续自动查询。');
+                      showTip('支付中，正在自动查询支付状态，请稍候...');
                     })
                     .catch(function () {
                       showTip('支付中，网络异常，系统会继续自动查询。');
@@ -160,13 +166,13 @@
 
                 try {
                   if (window.sessionStorage && window.sessionStorage.getItem(key) === '1') {
-                    showCheckForm();
+                    enableCheckButton();
                     startPolling();
                   }
                 } catch (_err) {}
 
                 payBtn.addEventListener('click', function () {
-                  showCheckForm();
+                  enableCheckButton();
                   try {
                     if (window.sessionStorage && !window.sessionStorage.getItem(startKey)) {
                       window.sessionStorage.setItem(startKey, String(Date.now()));
