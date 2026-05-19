@@ -6,6 +6,7 @@ const {
   listActiveProductsWithStock,
   listAllProductsWithStock,
   createProduct,
+  updateProductSort,
   toggleProduct,
   deleteProduct,
   importCards,
@@ -203,6 +204,98 @@ app.get('/order/:orderNo', (req, res, next) => {
     res.render('order', { order });
   } catch (err) {
     next(err);
+  }
+});
+
+app.get('/order/:orderNo/poll-status', async (req, res) => {
+  const orderNo = String(req.params.orderNo || '').trim();
+  try {
+    const order = getOrderByNo(orderNo);
+    if (!order) {
+      return res.status(404).json({
+        ok: false,
+        message: '订单不存在',
+      });
+    }
+
+    if (TEST_DIRECT_ORDER_PAGE) {
+      const paidOrder = markOrderPaidAndDeliver(orderNo, {
+        payMsg: '测试模式：轮询直接确认已支付',
+      });
+      return res.json({
+        ok: true,
+        order: paidOrder || order,
+        paid: true,
+        done: true,
+        payStateText: payStateText((paidOrder || order).pay_state),
+      });
+    }
+
+    if (order.status === 'delivered' || order.status === 'out_of_stock') {
+      return res.json({
+        ok: true,
+        order,
+        paid: Number(order.pay_state) === 2,
+        done: true,
+        payStateText: payStateText(order.pay_state),
+      });
+    }
+
+    const paymentConfig = getPaymentConfig();
+    if (!paymentConfig.enabled) {
+      return res.json({
+        ok: false,
+        message: '支付通道未启用',
+      });
+    }
+
+    writePaymentLog(
+      'order_poll_query_request',
+      order.order_no,
+      buildQueryPaymentLogRequest(paymentConfig, {
+        outTradeNo: order.order_no,
+        tradeNo: order.pay_order_id || '',
+      })
+    );
+    const response = await queryPayment(paymentConfig, {
+      outTradeNo: order.order_no,
+      tradeNo: order.pay_order_id || '',
+    });
+    writePaymentLog('order_poll_query_response', order.order_no, response);
+
+    if (!isSuccessCode(response.code)) {
+      return res.json({
+        ok: false,
+        message: getGatewayMsg(response) || '查单失败',
+      });
+    }
+
+    const payState = resolvePayState(response);
+    let nextOrder = applyPayState(order.order_no, payState, {
+      payOrderId: response.trade_no || '',
+      payMsg: getGatewayMsg(response) || '',
+    });
+
+    if (payState === 2) {
+      nextOrder = markOrderPaidAndDeliver(order.order_no, {
+        payOrderId: response.trade_no || '',
+        payMsg: '订单页自动轮询确认已支付',
+      });
+    }
+
+    const latest = nextOrder || getOrderByNo(order.order_no) || order;
+    return res.json({
+      ok: true,
+      order: latest,
+      paid: Number(latest.pay_state) === 2,
+      done: latest.status === 'delivered' || latest.status === 'out_of_stock',
+      payStateText: payStateText(latest.pay_state),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: err.message || '轮询失败',
+    });
   }
 });
 
@@ -475,6 +568,7 @@ app.post('/admin/products', requireAdmin, (req, res, next) => {
     const name = String(req.body.name || '').trim();
     const description = String(req.body.description || '').trim();
     const price = Number(req.body.price || 0);
+    const sortOrder = Number.parseInt(req.body.sort_order, 10);
 
     if (!name || !price || price < 0) {
       return redirectWithMsg(req, res, '/admin/products', '商品名称和价格必填');
@@ -484,6 +578,7 @@ app.post('/admin/products', requireAdmin, (req, res, next) => {
       name,
       description,
       price_cents: Math.round(price * 100),
+      sort_order: Number.isInteger(sortOrder) ? sortOrder : 0,
     });
 
     redirectWithMsg(req, res, '/admin/products', '商品已创建');
@@ -499,6 +594,20 @@ app.post('/admin/products/:id/toggle', requireAdmin, (req, res, next) => {
     redirectWithMsg(req, res, '/admin/products', '商品状态已更新');
   } catch (err) {
     next(err);
+  }
+});
+
+app.post('/admin/products/:id/sort', requireAdmin, (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const sortOrder = Number.parseInt(req.body.sort_order, 10);
+    const ok = updateProductSort(id, Number.isInteger(sortOrder) ? sortOrder : 0);
+    if (!ok) {
+      return redirectWithMsg(req, res, '/admin/products', '商品不存在');
+    }
+    return redirectWithMsg(req, res, '/admin/products', '商品排序已更新');
+  } catch (err) {
+    return next(err);
   }
 });
 

@@ -6,7 +6,7 @@ const dataDir = path.resolve(__dirname, '..', 'data');
 const dbFile = path.join(dataDir, 'store.db');
 const legacyDataFile = path.join(dataDir, 'store.json');
 const DEFAULT_SITE_NAME = '简易自动发卡平台';
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const dbExistedBeforeOpen = fs.existsSync(dbFile);
 
 if (!fs.existsSync(dataDir)) {
@@ -27,6 +27,7 @@ function initDb() {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       price_cents INTEGER NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
@@ -104,6 +105,11 @@ function runDbMigrations() {
     setUserVersion(3);
     version = 3;
   }
+  if (version < 4) {
+    migrateToV4();
+    setUserVersion(4);
+    version = 4;
+  }
 }
 
 function migrateToV1() {
@@ -143,6 +149,12 @@ function migrateToV3() {
     CREATE INDEX IF NOT EXISTS idx_orders_created_id ON orders(id DESC);
     CREATE INDEX IF NOT EXISTS idx_payment_logs_created_id ON payment_logs(id DESC);
   `);
+}
+
+function migrateToV4() {
+  // v4: 商品排序字段
+  ensureColumn('products', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_products_sort_order ON products(sort_order ASC, id DESC);');
 }
 
 function getUserVersion() {
@@ -351,6 +363,7 @@ function mapProductRow(row) {
     name: String(row.name || ''),
     description: String(row.description || ''),
     price_cents: Number(row.price_cents || 0),
+    sort_order: Number(row.sort_order || 0),
     is_active: Number(row.is_active || 0) === 1,
     created_at: String(row.created_at || ''),
     stock: Number(row.stock || 0),
@@ -405,12 +418,13 @@ function listActiveProductsWithStock() {
     .prepare(
       `SELECT
         p.id, p.name, p.description, p.price_cents, p.is_active, p.created_at,
+        p.sort_order,
         COALESCE(SUM(CASE WHEN c.is_sold = 0 THEN 1 ELSE 0 END), 0) AS stock
       FROM products p
       LEFT JOIN cards c ON c.product_id = p.id
       WHERE p.is_active = 1
       GROUP BY p.id
-      ORDER BY p.id DESC`
+      ORDER BY p.sort_order ASC, p.id DESC`
     )
     .all();
   return rows.map(mapProductRow);
@@ -421,21 +435,30 @@ function listAllProductsWithStock() {
     .prepare(
       `SELECT
         p.id, p.name, p.description, p.price_cents, p.is_active, p.created_at,
+        p.sort_order,
         COALESCE(SUM(CASE WHEN c.is_sold = 0 THEN 1 ELSE 0 END), 0) AS stock
       FROM products p
       LEFT JOIN cards c ON c.product_id = p.id
       GROUP BY p.id
-      ORDER BY p.id DESC`
+      ORDER BY p.sort_order ASC, p.id DESC`
     )
     .all();
   return rows.map(mapProductRow);
 }
 
-function createProduct({ name, description, price_cents }) {
+function createProduct({ name, description, price_cents, sort_order }) {
   const info = db
-    .prepare('INSERT INTO products(name, description, price_cents, is_active, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(String(name), String(description || ''), Number(price_cents), 1, now());
+    .prepare('INSERT INTO products(name, description, price_cents, sort_order, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(String(name), String(description || ''), Number(price_cents), normalizeSortOrder(sort_order), 1, now());
   return Number(info.lastInsertRowid);
+}
+
+function updateProductSort(id, sort_order) {
+  const productId = Number(id);
+  const row = db.prepare('SELECT id FROM products WHERE id = ?').get(productId);
+  if (!row) return false;
+  db.prepare('UPDATE products SET sort_order = ? WHERE id = ?').run(normalizeSortOrder(sort_order), productId);
+  return true;
 }
 
 function toggleProduct(id) {
@@ -970,6 +993,12 @@ function clampInt(value, fallback, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+function normalizeSortOrder(value) {
+  const n = Number.parseInt(value, 10);
+  if (!Number.isInteger(n)) return 0;
+  return Math.max(0, Math.min(999999, n));
+}
+
 function pad2(n) {
   return String(n).padStart(2, '0');
 }
@@ -1008,6 +1037,7 @@ module.exports = {
   listActiveProductsWithStock,
   listAllProductsWithStock,
   createProduct,
+  updateProductSort,
   toggleProduct,
   deleteProduct,
   importCards,

@@ -61,13 +61,132 @@
         <div class="card warning">
           <h3>待支付</h3>
           <% if (order.pay_url) { %>
-            <p><a class="link-btn" href="<%= order.pay_url %>" target="_blank" rel="noopener">前往支付</a></p>
+            <p class="pay-actions">
+              <a class="link-btn pay-link-large" id="payNowBtn" href="<%= order.pay_url %>" target="_blank" rel="noopener">前往支付</a>
+            </p>
+            <p class="paying-tip is-hidden" id="payingTip">支付中，正在自动查询支付状态，请稍候...</p>
+            <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form pay-check-wrap is-hidden" id="payCheckForm">
+              <button type="submit">我已支付，点击查单</button>
+            </form>
+            <script>
+              (function () {
+                var payBtn = document.getElementById('payNowBtn');
+                var checkForm = document.getElementById('payCheckForm');
+                var tipNode = document.getElementById('payingTip');
+                if (!payBtn || !checkForm || !tipNode) return;
+
+                var key = 'pay_opened_<%= order.order_no %>';
+                var startKey = 'pay_poll_started_at_<%= order.order_no %>';
+                var polling = false;
+                var timer = null;
+                var pollStartedAt = 0;
+                var maxDurationMs = 3 * 60 * 1000;
+
+                function showCheckForm() {
+                  checkForm.classList.remove('is-hidden');
+                }
+
+                function showTip(text) {
+                  tipNode.textContent = text;
+                  tipNode.classList.remove('is-hidden');
+                }
+
+                function pollPayStatus() {
+                  fetch('/order/<%= order.order_no %>/poll-status', {
+                    method: 'GET',
+                    headers: { Accept: 'application/json' },
+                  })
+                    .then(function (res) {
+                      return res.json();
+                    })
+                    .then(function (data) {
+                      if (!data || !data.ok) {
+                        showTip('支付中，自动查单失败：' + ((data && data.message) || '请稍后重试'));
+                        return;
+                      }
+                      if (data.paid) {
+                        showTip('支付成功，正在进入下一步...');
+                        if (timer) clearInterval(timer);
+                        timer = null;
+                        setTimeout(function () {
+                          window.location.href = '/order/<%= order.order_no %>?__msg=' + encodeURIComponent('支付成功，卡密已发放');
+                        }, 600);
+                        return;
+                      }
+                      showTip('支付中，当前状态：' + (data.payStateText || '处理中') + '。系统会继续自动查询。');
+                    })
+                    .catch(function () {
+                      showTip('支付中，网络异常，系统会继续自动查询。');
+                    });
+                }
+
+                function startPolling() {
+                  if (polling) return;
+                  var now = Date.now();
+                  if (!pollStartedAt) {
+                    pollStartedAt = now;
+                    try {
+                      if (window.sessionStorage) {
+                        var savedAt = Number(window.sessionStorage.getItem(startKey) || '0');
+                        if (savedAt > 0) {
+                          pollStartedAt = savedAt;
+                        } else {
+                          window.sessionStorage.setItem(startKey, String(now));
+                        }
+                      }
+                    } catch (_err) {}
+                  }
+
+                  if (now - pollStartedAt >= maxDurationMs) {
+                    showTip('自动查询已超过3分钟，请点击“我已支付，点击查单”手动确认。');
+                    return;
+                  }
+
+                  polling = true;
+                  showTip('支付中，正在自动查询支付状态，请稍候...');
+                  pollPayStatus();
+                  timer = setInterval(function () {
+                    var current = Date.now();
+                    if (current - pollStartedAt >= maxDurationMs) {
+                      if (timer) clearInterval(timer);
+                      timer = null;
+                      polling = false;
+                      showTip('自动查询已超过3分钟，请点击“我已支付，点击查单”手动确认。');
+                      return;
+                    }
+                    pollPayStatus();
+                  }, 5000);
+                }
+
+                try {
+                  if (window.sessionStorage && window.sessionStorage.getItem(key) === '1') {
+                    showCheckForm();
+                    startPolling();
+                  }
+                } catch (_err) {}
+
+                payBtn.addEventListener('click', function () {
+                  showCheckForm();
+                  try {
+                    if (window.sessionStorage && !window.sessionStorage.getItem(startKey)) {
+                      window.sessionStorage.setItem(startKey, String(Date.now()));
+                    }
+                  } catch (_err) {}
+                  startPolling();
+                  try {
+                    if (window.sessionStorage) {
+                      window.sessionStorage.setItem(key, '1');
+                    }
+                  } catch (_err) {}
+                });
+              })();
+            </script>
           <% } else { %>
             <p>当前未拿到支付链接，请联系管理员检查通道配置。</p>
+            <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form pay-check-wrap">
+              <button type="submit">我已支付，点击查单</button>
+            </form>
           <% } %>
-          <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form">
-            <button type="submit">我已支付，点击查单</button>
-          </form>
         </div>
       <% } %>
 

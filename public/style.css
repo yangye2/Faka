@@ -482,6 +482,27 @@ tr:hover td {
   margin-top: 10px;
 }
 
+.pay-actions {
+  margin: 10px 0 12px;
+}
+
+.pay-link-large {
+  min-height: 48px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.pay-check-wrap {
+  margin-top: 8px;
+}
+
+.paying-tip {
+  margin: 8px 0 10px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
 .secret-actions button {
   width: auto;
   padding: 8px 12px;
