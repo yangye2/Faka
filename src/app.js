@@ -63,7 +63,8 @@ app.use(
 app.use((req, res, next) => {
   try {
     res.locals.admin = req.session.admin || null;
-    res.locals.msg = req.session.flashMsg || '';
+    const queryMsg = String((req.query && req.query.__msg) || '').trim();
+    res.locals.msg = req.session.flashMsg || queryMsg || '';
     delete req.session.flashMsg;
     res.locals.siteName = getSiteName();
     res.locals.paymentEnabled = getPaymentConfig().enabled || TEST_DIRECT_ORDER_PAGE;
@@ -849,7 +850,11 @@ function maskEmail(email) {
 }
 
 function redirectWithMsg(req, res, targetUrl, msg) {
-  req.session.flashMsg = String(msg || '');
+  const text = String(msg || '').trim();
+  if (text) {
+    req.session.flashMsg = text;
+    return res.redirect(appendMsgQuery(targetUrl, text));
+  }
   return res.redirect(targetUrl);
 }
 
@@ -978,4 +983,10 @@ function detectDevice(req) {
   if (ua.includes('alipayclient')) return 'alipay';
   if (ua.includes('mobile')) return 'mobile';
   return 'pc';
+}
+
+function appendMsgQuery(targetUrl, msg) {
+  const base = String(targetUrl || '/');
+  const mark = base.includes('?') ? '&' : '?';
+  return `${base}${mark}__msg=${encodeURIComponent(String(msg || ''))}`;
 }

@@ -16,6 +16,15 @@
         modal.classList.add('is-hidden');
       }
 
+      try {
+        var url = new URL(window.location.href);
+        if (url.searchParams.has('__msg')) {
+          url.searchParams.delete('__msg');
+          var nextUrl = url.pathname + (url.search ? url.search : '') + (url.hash || '');
+          window.history.replaceState({}, '', nextUrl);
+        }
+      } catch (_err) {}
+
       closeBtn.addEventListener('click', closeModal);
       modal.addEventListener('click', function (event) {
         if (event.target === modal) closeModal();
