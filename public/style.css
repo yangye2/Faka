@@ -486,11 +486,78 @@ tr:hover td {
   margin: 10px 0 12px;
 }
 
-.pay-link-large {
-  min-height: 48px;
-  padding: 12px 24px;
-  font-size: 16px;
+.pay-open-wrap {
+  margin: 10px 0 12px;
+}
+
+.pay-qrcode-wrap {
+  margin: 8px 0 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  text-align: center;
+}
+
+.pay-scene-title {
+  margin: 4px 0 10px;
+  font-size: 30px;
+}
+
+.pay-qrcode-frame {
+  display: inline-block;
+  padding: 12px;
+  border: 2px solid #0ea5e9;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.pay-qrcode-image {
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0;
+  border: 0;
+  background: #fff;
+}
+
+.pay-scene-desc {
+  margin: 10px 0 0;
+}
+
+.pay-countdown-card {
+  text-align: center;
+  margin: 0 0 12px;
+  padding: 10px 8px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.pay-countdown-label {
+  margin: 0;
+  color: var(--muted);
+}
+
+.pay-countdown-time {
+  margin: 4px 0;
+  font-size: 40px;
   font-weight: 700;
+}
+
+.pay-countdown-status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.pay-qrcode-actions {
+  margin: 8px 0 10px;
+  text-align: center;
+}
+
+.pay-qrcode-actions button {
+  width: auto;
+  padding: 9px 14px;
 }
 
 .pay-check-wrap {
@@ -717,6 +784,40 @@ code {
 :root[data-theme="dark"] .warning h3,
 :root[data-theme="dark"] .warning p {
   color: #f8fafc;
+}
+
+:root[data-theme="dark"] .pay-qrcode-wrap {
+  background: rgba(15, 23, 42, 0.62);
+}
+
+:root[data-theme="dark"] .pay-scene-title {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .pay-scene-desc {
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .pay-countdown-card {
+  background: rgba(15, 23, 42, 0.66);
+  border-color: rgba(148, 163, 184, 0.32);
+}
+
+:root[data-theme="dark"] .pay-countdown-label {
+  color: #cbd5e1;
+}
+
+:root[data-theme="dark"] .pay-countdown-time {
+  color: #f8fafc;
+}
+
+:root[data-theme="dark"] .pay-countdown-status {
+  color: #e2e8f0;
+}
+
+:root[data-theme="dark"] #payQrTip,
+:root[data-theme="dark"] #payCheckHint {
+  color: #dbeafe;
 }
 
 .theme-toggle {

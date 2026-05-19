@@ -44,6 +44,21 @@
       <% }) %>
     </section>
   </div>
+  <script>
+    (function () {
+      var forms = document.querySelectorAll('.buy-form');
+      if (!forms || !forms.length) return;
+
+      forms.forEach(function (form) {
+        form.addEventListener('submit', function () {
+          var btn = form.querySelector('button[type=\"submit\"]');
+          if (!btn || btn.disabled) return;
+          btn.disabled = true;
+          btn.textContent = '生成订单中...';
+        });
+      });
+    })();
+  </script>
   <%- include('_theme_toggle') %>
 </body>
 </html>

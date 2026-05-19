@@ -44,6 +44,23 @@
           if (n === 6) return '订单关闭';
           return `未知状态(${state})`;
         }
+
+        function paySceneTitle(url) {
+          const text = String(url || '').toLowerCase();
+          if (text.includes('alipay')) return '支付宝扫码支付';
+          if (text.includes('weixin') || text.includes('wxpay') || text.includes('wechat')) return '微信扫码支付';
+          return '扫码支付';
+        }
+
+        function resolveDisplayType(order) {
+          const type = String(order.pay_data_type || '').trim().toLowerCase();
+          if (type === 'payurl') return 'payurl';
+          if (type === 'qrcode' || type === 'urlscheme') return 'qrcode';
+          const text = String(order.pay_url || '').trim().toLowerCase();
+          if (!text) return '';
+          if (text.startsWith('weixin://') || text.startsWith('alipays://')) return 'qrcode';
+          return 'qrcode';
+        }
       %>
       <div class="card">
         <p>订单号: <strong><%= order.order_no %></strong></p>
@@ -61,14 +78,41 @@
         <div class="card warning">
           <h3>待支付</h3>
           <% if (order.pay_url) { %>
-            <p class="pay-actions">
-              <a class="link-btn pay-link-large" id="payNowBtn" href="<%= order.pay_url %>" target="_blank" rel="noopener">前往支付</a>
-            </p>
-            <p class="paying-tip is-hidden" id="payingTip">支付中，正在自动查询支付状态，请稍候...</p>
+            <% const displayType = resolveDisplayType(order); %>
+            <% if (displayType !== 'payurl') { %>
+              <div class="pay-qrcode-wrap">
+                <h4 class="pay-scene-title"><%= paySceneTitle(order.pay_url) %></h4>
+                <div class="pay-qrcode-frame">
+                  <img
+                    id="payQrImage"
+                    class="pay-qrcode-image"
+                    alt="支付二维码"
+                    src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=<%= encodeURIComponent(order.pay_url) %>"
+                  />
+                </div>
+                <p class="pay-scene-desc">请使用手机扫码完成支付</p>
+              </div>
+            <% } %>
+            <div class="pay-countdown-card">
+              <p class="pay-countdown-label">剩余支付时间</p>
+              <p class="pay-countdown-time" id="payCountdown">30:00</p>
+              <p class="pay-countdown-status" id="payingTip">等待支付...</p>
+            </div>
+            <% if (displayType === 'payurl') { %>
+              <form method="get" action="<%= order.pay_url %>" target="_blank" class="stack-form pay-open-wrap">
+                <button type="submit" id="payNowBtn">前往支付</button>
+              </form>
+            <% } %>
+            <% if (displayType !== 'payurl') { %>
+              <div class="pay-qrcode-actions">
+                <button type="button" id="copyPayLinkBtn">复制二维码链接</button>
+                <p class="muted" id="payQrTip">如无法扫码，请点击上方按钮复制链接后在支付应用打开。</p>
+              </div>
+            <% } %>
             <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form pay-check-wrap" id="payCheckForm">
               <button type="submit" id="payCheckBtn" disabled>我已支付，点击查单</button>
             </form>
-            <p class="muted" id="payCheckHint">请先点击“前往支付”，再点击“我已支付，点击查单”。</p>
+            <p class="muted" id="payCheckHint"><%= displayType === 'payurl' ? '请先点击“前往支付”，再点击“我已支付，点击查单”。' : '扫码完成支付后，再点击“我已支付，点击查单”。' %></p>
             <script>
               (function () {
                 var payBtn = document.getElementById('payNowBtn');
@@ -76,14 +120,17 @@
                 var checkBtn = document.getElementById('payCheckBtn');
                 var checkHint = document.getElementById('payCheckHint');
                 var tipNode = document.getElementById('payingTip');
-                if (!payBtn || !checkForm || !checkBtn || !tipNode) return;
+                var payQrImage = document.getElementById('payQrImage');
+                var copyPayLinkBtn = document.getElementById('copyPayLinkBtn');
+                var payQrTip = document.getElementById('payQrTip');
+                var countdownNode = document.getElementById('payCountdown');
+                if (!checkForm || !checkBtn || !tipNode || !countdownNode) return;
 
                 var key = 'pay_opened_<%= order.order_no %>';
                 var startKey = 'pay_poll_started_at_<%= order.order_no %>';
-                var polling = false;
-                var timer = null;
+                var countdownTimer = null;
                 var pollStartedAt = 0;
-                var maxDurationMs = 3 * 60 * 1000;
+                var maxDurationMs = 30 * 60 * 1000;
 
                 function enableCheckButton() {
                   checkBtn.disabled = false;
@@ -94,40 +141,67 @@
 
                 function showTip(text) {
                   tipNode.textContent = text;
-                  tipNode.classList.remove('is-hidden');
                 }
 
-                function pollPayStatus() {
-                  fetch('/order/<%= order.order_no %>/poll-status', {
-                    method: 'GET',
-                    headers: { Accept: 'application/json' },
-                  })
-                    .then(function (res) {
-                      return res.json();
-                    })
-                    .then(function (data) {
-                      if (!data || !data.ok) {
-                        showTip('支付中，自动查单失败：' + ((data && data.message) || '请稍后重试'));
-                        return;
-                      }
-                      if (data.paid) {
-                        showTip('支付成功，正在进入下一步...');
-                        if (timer) clearInterval(timer);
-                        timer = null;
-                        setTimeout(function () {
-                          window.location.href = '/order/<%= order.order_no %>?__msg=' + encodeURIComponent('支付成功，卡密已发放');
-                        }, 600);
-                        return;
-                      }
-                      showTip('支付中，正在自动查询支付状态，请稍候...');
-                    })
-                    .catch(function () {
-                      showTip('支付中，网络异常，系统会继续自动查询。');
-                    });
+                function formatRemain(ms) {
+                  var total = Math.max(0, Math.floor(ms / 1000));
+                  var m = Math.floor(total / 60);
+                  var s = total % 60;
+                  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
                 }
 
-                function startPolling() {
-                  if (polling) return;
+                function updateCountdown() {
+                  var remain = Math.max(0, pollStartedAt + maxDurationMs - Date.now());
+                  countdownNode.textContent = formatRemain(remain);
+                  if (remain <= 0) {
+                    showTip('支付超时，请重新下单。');
+                    if (countdownTimer) {
+                      clearInterval(countdownTimer);
+                      countdownTimer = null;
+                    }
+                  }
+                }
+
+                if (payQrImage) {
+                  payQrImage.addEventListener('error', function () {
+                    if (payQrTip) {
+                      payQrTip.textContent = '二维码加载失败，请点击“复制二维码链接”后在微信/支付宝打开。';
+                    }
+                  });
+                }
+
+                if (copyPayLinkBtn) {
+                  copyPayLinkBtn.addEventListener('click', function () {
+                    var text = '<%= order.pay_url %>';
+                    function done(msg) {
+                      if (payQrTip) payQrTip.textContent = msg;
+                    }
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(text).then(function () {
+                        done('二维码链接已复制。');
+                      }).catch(function () {
+                        done('复制失败，请手动复制链接。');
+                      });
+                      return;
+                    }
+                    var area = document.createElement('textarea');
+                    area.value = text;
+                    area.style.position = 'fixed';
+                    area.style.opacity = '0';
+                    document.body.appendChild(area);
+                    area.focus();
+                    area.select();
+                    try {
+                      document.execCommand('copy');
+                      done('二维码链接已复制。');
+                    } catch (_err) {
+                      done('复制失败，请手动复制链接。');
+                    }
+                    document.body.removeChild(area);
+                  });
+                }
+
+                function startCountdown() {
                   var now = Date.now();
                   if (!pollStartedAt) {
                     pollStartedAt = now;
@@ -143,48 +217,43 @@
                     } catch (_err) {}
                   }
 
-                  if (now - pollStartedAt >= maxDurationMs) {
-                    showTip('自动查询已超过3分钟，请点击“我已支付，点击查单”手动确认。');
-                    return;
+                  showTip('等待支付...');
+                  updateCountdown();
+                  if (!countdownTimer) {
+                    countdownTimer = setInterval(updateCountdown, 1000);
                   }
-
-                  polling = true;
-                  showTip('支付中，正在自动查询支付状态，请稍候...');
-                  pollPayStatus();
-                  timer = setInterval(function () {
-                    var current = Date.now();
-                    if (current - pollStartedAt >= maxDurationMs) {
-                      if (timer) clearInterval(timer);
-                      timer = null;
-                      polling = false;
-                      showTip('自动查询已超过3分钟，请点击“我已支付，点击查单”手动确认。');
-                      return;
-                    }
-                    pollPayStatus();
-                  }, 5000);
                 }
 
                 try {
                   if (window.sessionStorage && window.sessionStorage.getItem(key) === '1') {
                     enableCheckButton();
-                    startPolling();
                   }
                 } catch (_err) {}
 
-                payBtn.addEventListener('click', function () {
+                if (payBtn) {
+                  payBtn.addEventListener('click', function () {
+                    enableCheckButton();
+                    try {
+                      if (window.sessionStorage && !window.sessionStorage.getItem(startKey)) {
+                        window.sessionStorage.setItem(startKey, String(Date.now()));
+                      }
+                    } catch (_err) {}
+                    try {
+                      if (window.sessionStorage) {
+                        window.sessionStorage.setItem(key, '1');
+                      }
+                    } catch (_err) {}
+                  });
+                } else {
                   enableCheckButton();
-                  try {
-                    if (window.sessionStorage && !window.sessionStorage.getItem(startKey)) {
-                      window.sessionStorage.setItem(startKey, String(Date.now()));
-                    }
-                  } catch (_err) {}
-                  startPolling();
                   try {
                     if (window.sessionStorage) {
                       window.sessionStorage.setItem(key, '1');
                     }
                   } catch (_err) {}
-                });
+                }
+
+                startCountdown();
               })();
             </script>
           <% } else { %>

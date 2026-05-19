@@ -167,7 +167,8 @@ app.post('/buy', async (req, res) => {
       );
     }
 
-    const payUrl = String(response.payurl || response.qrcode || response.urlscheme || '').trim();
+    const resolved = resolvePayEntry(response);
+    const payUrl = String(resolved.payUrl || '').trim();
     if (!payUrl) {
       deleteOrderByNo(order.order_no);
       return redirectWithMsg(req, res, '/', '下单失败: 未返回有效支付链接');
@@ -175,6 +176,7 @@ app.post('/buy', async (req, res) => {
 
     updateOrderPaymentCreated(order.order_no, {
       payOrderId: response.trade_no || '',
+      payDataType: resolved.payDataType,
       payUrl,
       payState: 1,
       payMsg: getGatewayMsg(response) || '',
@@ -1067,6 +1069,36 @@ function buildMerchantQueryLogRequest(paymentConfig) {
       key: String(paymentConfig.key || ''),
     },
   };
+}
+
+function resolvePayEntry(response) {
+  const source = response && typeof response === 'object' ? response : {};
+  const nested = source.data && typeof source.data === 'object' ? source.data : {};
+
+  const qrcode = firstNonEmpty(source.qrcode, nested.qrcode);
+  if (qrcode) {
+    return { payDataType: 'qrcode', payUrl: qrcode };
+  }
+
+  const urlscheme = firstNonEmpty(source.urlscheme, nested.urlscheme);
+  if (urlscheme) {
+    return { payDataType: 'urlscheme', payUrl: urlscheme };
+  }
+
+  const payurl = firstNonEmpty(source.payurl, nested.payurl);
+  if (payurl) {
+    return { payDataType: 'payurl', payUrl: payurl };
+  }
+
+  return { payDataType: '', payUrl: '' };
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
 }
 
 function payStateText(state) {

@@ -6,7 +6,7 @@ const dataDir = path.resolve(__dirname, '..', 'data');
 const dbFile = path.join(dataDir, 'store.db');
 const legacyDataFile = path.join(dataDir, 'store.json');
 const DEFAULT_SITE_NAME = '简易自动发卡平台';
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const dbExistedBeforeOpen = fs.existsSync(dbFile);
 
 if (!fs.existsSync(dataDir)) {
@@ -55,6 +55,7 @@ function initDb() {
       created_at TEXT NOT NULL,
       pay_order_id TEXT NOT NULL DEFAULT '',
       pay_state INTEGER NOT NULL DEFAULT 0,
+      pay_data_type TEXT NOT NULL DEFAULT '',
       pay_url TEXT NOT NULL DEFAULT '',
       paid_at TEXT NOT NULL DEFAULT '',
       pay_msg TEXT NOT NULL DEFAULT '',
@@ -110,6 +111,11 @@ function runDbMigrations() {
     setUserVersion(4);
     version = 4;
   }
+  if (version < 5) {
+    migrateToV5();
+    setUserVersion(5);
+    version = 5;
+  }
 }
 
 function migrateToV1() {
@@ -155,6 +161,11 @@ function migrateToV4() {
   // v4: 商品排序字段
   ensureColumn('products', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE INDEX IF NOT EXISTS idx_products_sort_order ON products(sort_order ASC, id DESC);');
+}
+
+function migrateToV5() {
+  // v5: 记录支付返回类型（payurl / qrcode / urlscheme）
+  ensureColumn('orders', 'pay_data_type', "TEXT NOT NULL DEFAULT ''");
 }
 
 function getUserVersion() {
@@ -234,8 +245,8 @@ function maybeMigrateFromJson() {
       const stmt = db.prepare(
         `INSERT INTO orders(
           id, order_no, product_id, product_name, buyer_email, amount_cents, status,
-          delivered_card, created_at, pay_order_id, pay_state, pay_url, paid_at, pay_msg, pay_last_query_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          delivered_card, created_at, pay_order_id, pay_state, pay_data_type, pay_url, paid_at, pay_msg, pay_last_query_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       for (const o of legacy.orders) {
         const status = String(o.status || (o.delivered_card ? 'delivered' : 'pending_payment'));
@@ -257,6 +268,7 @@ function maybeMigrateFromJson() {
           String(o.created_at || now()),
           String(o.pay_order_id || ''),
           payState,
+          String(o.pay_data_type || ''),
           String(o.pay_url || ''),
           String(o.paid_at || ''),
           String(o.pay_msg || ''),
@@ -395,6 +407,7 @@ function mapOrderRow(row) {
     created_at: String(row.created_at || ''),
     pay_order_id: String(row.pay_order_id || ''),
     pay_state: Number(row.pay_state || 0),
+    pay_data_type: String(row.pay_data_type || ''),
     pay_url: String(row.pay_url || ''),
     paid_at: String(row.paid_at || ''),
     pay_msg: String(row.pay_msg || ''),
@@ -524,8 +537,8 @@ function createPendingOrder(productId, buyerEmail) {
     db.prepare(
       `INSERT INTO orders(
         order_no, product_id, product_name, buyer_email, amount_cents, status,
-        delivered_card, created_at, pay_order_id, pay_state, pay_url, paid_at, pay_msg, pay_last_query_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        delivered_card, created_at, pay_order_id, pay_state, pay_data_type, pay_url, paid_at, pay_msg, pay_last_query_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       orderNo,
       Number(product.id),
@@ -537,6 +550,7 @@ function createPendingOrder(productId, buyerEmail) {
       now(),
       '',
       0,
+      '',
       '',
       '',
       '',
@@ -555,6 +569,7 @@ function updateOrderPaymentCreated(orderNo, payload) {
   const order = mapOrderRow(row);
   const next = {
     pay_order_id: String(payload.payOrderId || order.pay_order_id || ''),
+    pay_data_type: String(payload.payDataType || order.pay_data_type || ''),
     pay_url: String(payload.payUrl || order.pay_url || ''),
     pay_msg: String(payload.payMsg || ''),
     pay_state: order.pay_state,
@@ -576,8 +591,9 @@ function updateOrderPaymentCreated(orderNo, payload) {
     }
   }
 
-  db.prepare('UPDATE orders SET pay_order_id=?, pay_url=?, pay_msg=?, pay_state=?, status=?, paid_at=? WHERE order_no=?').run(
+  db.prepare('UPDATE orders SET pay_order_id=?, pay_data_type=?, pay_url=?, pay_msg=?, pay_state=?, status=?, paid_at=? WHERE order_no=?').run(
     next.pay_order_id,
+    next.pay_data_type,
     next.pay_url,
     next.pay_msg,
     next.pay_state,
