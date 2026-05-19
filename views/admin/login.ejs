@@ -1,0 +1,26 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= siteName %> - 后台登录</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="container narrow">
+    <div class="card">
+      <h2><%= siteName %> 后台登录</h2>
+      <%- include('../_msg_modal') %>
+      <form method="post" action="/admin/login" class="stack-form">
+        <input name="username" placeholder="账号" required />
+        <input name="password" type="password" placeholder="密码" required />
+        <button type="submit">登录</button>
+      </form>
+      <p class="muted"><a href="/">返回前台</a></p>
+    </div>
+  </div>
+  <%- include('../_theme_toggle') %>
+</body>
+</html>
+

@@ -1,0 +1,16 @@
+services:
+  faka:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: faka
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai
+      PORT: 3000
+    volumes:
+      - ./data:/app/data

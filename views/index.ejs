@@ -1,0 +1,50 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= siteName %></title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="container">
+    <header class="site-header">
+      <div>
+        <h1><%= siteName %></h1>
+        <p class="hero-note">在线支付 · 自动发货 · 实时库存</p>
+      </div>
+    </header>
+
+    <%- include('_msg_modal') %>
+
+    <section class="grid">
+      <% if (!products.length) { %>
+        <div class="card">
+          <h3>暂无商品</h3>
+          <p>请先在后台创建商品并导入卡密。</p>
+        </div>
+      <% } %>
+
+      <% products.forEach(item => { %>
+        <div class="card">
+          <h3><%= item.name %></h3>
+          <p class="desc"><%= item.description || '暂无描述' %></p>
+          <p class="price-line">价格: <strong class="price-highlight">￥<%= (item.price_cents / 100).toFixed(2) %></strong></p>
+          <p>库存: <strong><%= item.stock %></strong></p>
+
+          <form method="post" action="/buy" class="buy-form">
+            <input type="hidden" name="product_id" value="<%= item.id %>" />
+            <input type="email" name="buyer_email" placeholder="购买人邮箱（可选）" />
+            <button type="submit" <%= item.stock <= 0 || !paymentEnabled ? 'disabled' : '' %>>
+              <%= item.stock > 0 ? (paymentEnabled ? '立即购买并支付' : '支付未启用') : '缺货' %>
+            </button>
+          </form>
+        </div>
+      <% }) %>
+    </section>
+  </div>
+  <%- include('_theme_toggle') %>
+</body>
+</html>
+

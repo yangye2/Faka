@@ -1,0 +1,66 @@
+﻿<div class="theme-toggle" role="group" aria-label="主题切换">
+  <button type="button" class="theme-toggle__btn" data-theme-mode="light">日间</button>
+  <button type="button" class="theme-toggle__btn" data-theme-mode="dark">夜间</button>
+  <button type="button" class="theme-toggle__btn" data-theme-mode="auto">跟随系统</button>
+</div>
+<script>
+  (function () {
+    var root = document.documentElement;
+    var key = 'site-theme-mode';
+    var prefersDark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('.theme-toggle__btn'));
+    if (!buttons.length) return;
+
+    function readMode() {
+      try {
+        return localStorage.getItem(key) || 'auto';
+      } catch (_err) {
+        return 'auto';
+      }
+    }
+
+    function writeMode(mode) {
+      try {
+        localStorage.setItem(key, mode);
+      } catch (_err) {}
+    }
+
+    function applyMode(mode) {
+      var useDark = mode === 'dark' || (mode === 'auto' && prefersDark && prefersDark.matches);
+      if (useDark) {
+        root.setAttribute('data-theme', 'dark');
+      } else {
+        root.removeAttribute('data-theme');
+      }
+      root.setAttribute('data-theme-mode', mode);
+
+      buttons.forEach(function (btn) {
+        var active = btn.getAttribute('data-theme-mode') === mode;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+
+    var mode = readMode();
+    if (!['light', 'dark', 'auto'].includes(mode)) {
+      mode = 'auto';
+    }
+    applyMode(mode);
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var next = btn.getAttribute('data-theme-mode') || 'auto';
+        writeMode(next);
+        applyMode(next);
+      });
+    });
+
+    if (prefersDark && typeof prefersDark.addEventListener === 'function') {
+      prefersDark.addEventListener('change', function () {
+        if (readMode() === 'auto') {
+          applyMode('auto');
+        }
+      });
+    }
+  })();
+</script>

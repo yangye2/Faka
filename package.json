@@ -1,0 +1,15 @@
+﻿{
+  "name": "simple-faka-platform",
+  "version": "1.0.0",
+  "description": "Simple auto card issuing platform with admin backend",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js"
+  },
+  "dependencies": {
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1"
+  }
+}

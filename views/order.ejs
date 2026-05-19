@@ -1,0 +1,145 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= siteName %> - 订单详情</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="container narrow">
+    <header class="site-header">
+      <h1>订单详情</h1>
+      <a class="link-btn" href="/">返回首页</a>
+    </header>
+
+    <%- include('_msg_modal') %>
+
+    <% if (!order) { %>
+      <div class="card">
+        <h3>订单不存在</h3>
+      </div>
+    <% } else { %>
+      <%
+        function orderStatusText(status) {
+          if (status === 'pending_payment') return '待支付';
+          if (status === 'paying') return '支付中';
+          if (status === 'paid') return '已支付待发货';
+          if (status === 'delivered') return '已发货';
+          if (status === 'out_of_stock') return '支付成功但库存不足';
+          if (status === 'pay_failed') return '支付失败';
+          if (status === 'pay_closed') return '支付关闭';
+          return `未知状态(${status})`;
+        }
+
+        function payStateText(state) {
+          const n = Number(state);
+          if (n === 0) return '未支付';
+          if (n === 1) return '支付中';
+          if (n === 2) return '支付成功';
+          if (n === 3) return '支付失败';
+          if (n === 4) return '已撤销';
+          if (n === 5) return '已退款';
+          if (n === 6) return '订单关闭';
+          return `未知状态(${state})`;
+        }
+      %>
+      <div class="card">
+        <p>订单号: <strong><%= order.order_no %></strong></p>
+        <p>商品: <strong><%= order.product_name %></strong></p>
+        <p>金额: <strong>￥<%= (order.amount_cents / 100).toFixed(2) %></strong></p>
+        <p>订单状态: <strong><%= orderStatusText(order.status) %></strong></p>
+        <p>支付状态: <strong><%= payStateText(order.pay_state) %></strong></p>
+        <p>下单时间: <%= order.created_at %></p>
+        <% if (order.paid_at) { %><p>支付时间: <%= order.paid_at %></p><% } %>
+        <% if (order.buyer_email) { %><p>邮箱: <%= order.buyer_email %></p><% } %>
+        <% if (order.pay_order_id) { %><p>支付平台单号: <%= order.pay_order_id %></p><% } %>
+      </div>
+
+      <% if (order.status === 'pending_payment' || order.status === 'paying') { %>
+        <div class="card warning">
+          <h3>待支付</h3>
+          <% if (order.pay_url) { %>
+            <p><a class="link-btn" href="<%= order.pay_url %>" target="_blank" rel="noopener">前往支付</a></p>
+          <% } else { %>
+            <p>当前未拿到支付链接，请联系管理员检查通道配置。</p>
+          <% } %>
+          <form method="post" action="/order/<%= order.order_no %>/check-pay" class="stack-form">
+            <button type="submit">我已支付，点击查单</button>
+          </form>
+        </div>
+      <% } %>
+
+      <% if (order.status === 'delivered') { %>
+        <div class="card success">
+          <h3>卡密已发放</h3>
+          <pre class="secret" id="secretText"><%= order.delivered_card %></pre>
+          <div class="secret-actions">
+            <button type="button" id="copySecretBtn">复制卡密</button>
+            <span class="secret-tip" id="secretTip">请先复制保存，关闭页面后可能找不到此卡密。</span>
+          </div>
+        </div>
+        <script>
+          (function () {
+            var secretNode = document.getElementById('secretText');
+            var copyBtn = document.getElementById('copySecretBtn');
+            var tipNode = document.getElementById('secretTip');
+            if (!secretNode || !copyBtn || !tipNode) return;
+
+            var copied = false;
+
+            function setTip(text) {
+              tipNode.textContent = text;
+            }
+
+            async function copySecret() {
+              var secret = secretNode.textContent || '';
+              try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                  await navigator.clipboard.writeText(secret);
+                } else {
+                  var area = document.createElement('textarea');
+                  area.value = secret;
+                  area.style.position = 'fixed';
+                  area.style.opacity = '0';
+                  document.body.appendChild(area);
+                  area.focus();
+                  area.select();
+                  document.execCommand('copy');
+                  document.body.removeChild(area);
+                }
+                copied = true;
+                copyBtn.textContent = '已复制';
+                setTip('卡密已复制。');
+              } catch (_err) {
+                setTip('复制失败，请手动选中文本复制。');
+              }
+            }
+
+            copyBtn.addEventListener('click', copySecret);
+
+            window.addEventListener('beforeunload', function (event) {
+              if (copied) return;
+              event.preventDefault();
+              event.returnValue = '卡密未复制，关闭后可能丢失。';
+              return event.returnValue;
+            });
+          })();
+        </script>
+      <% } else if (order.status === 'out_of_stock') { %>
+        <div class="card warning">
+          <h3>库存不足</h3>
+          <p>该订单支付成功但暂未发卡，请联系管理员处理。</p>
+        </div>
+      <% } else if (order.status === 'pay_failed' || order.status === 'pay_closed') { %>
+        <div class="card warning">
+          <h3>支付未成功</h3>
+          <p><%= order.pay_msg || '订单未支付成功，请重新下单。' %></p>
+        </div>
+      <% } %>
+    <% } %>
+  </div>
+  <%- include('_theme_toggle') %>
+</body>
+</html>

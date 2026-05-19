@@ -1,0 +1,28 @@
+<% if (msg) { %>
+  <div class="msg-modal" id="msgModal" role="dialog" aria-modal="true" aria-labelledby="msgModalTitle">
+    <div class="msg-modal__panel">
+      <h3 id="msgModalTitle">提示</h3>
+      <p><%= msg %></p>
+      <button type="button" id="msgModalClose">我知道了</button>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var modal = document.getElementById('msgModal');
+      var closeBtn = document.getElementById('msgModalClose');
+      if (!modal || !closeBtn) return;
+
+      function closeModal() {
+        modal.classList.add('is-hidden');
+      }
+
+      closeBtn.addEventListener('click', closeModal);
+      modal.addEventListener('click', function (event) {
+        if (event.target === modal) closeModal();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') closeModal();
+      });
+    })();
+  </script>
+<% } %>

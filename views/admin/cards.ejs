@@ -1,0 +1,70 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= siteName %> - 卡密管理</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="container">
+    <%- include('_nav') %>
+
+    <%- include('../_msg_modal') %>
+
+    <div class="card">
+      <h3>库存总览</h3>
+      <table>
+        <thead><tr><th>商品</th><th>总卡密</th><th>未售</th></tr></thead>
+        <tbody>
+          <% stockMapRows.forEach(s => { %>
+            <tr><td><%= s.name %></td><td><%= s.total || 0 %></td><td><%= s.stock || 0 %></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>导入卡密</h3>
+      <form method="post" action="/admin/cards/import" class="stack-form">
+        <select name="product_id" required>
+          <option value="">选择商品</option>
+          <% products.forEach(p => { %>
+            <option value="<%= p.id %>" <%= selectedProductId === p.id ? 'selected' : '' %>><%= p.name %></option>
+          <% }) %>
+        </select>
+        <textarea name="cards" rows="8" placeholder="每行一条卡密，例如：账号----密码" required></textarea>
+        <button type="submit">批量导入</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>最近 100 条卡密</h3>
+      <form method="get" action="/admin/cards" class="filter-form">
+        <select name="product_id" required>
+          <% products.forEach(p => { %>
+            <option value="<%= p.id %>" <%= selectedProductId === p.id ? 'selected' : '' %>><%= p.name %></option>
+          <% }) %>
+        </select>
+        <button type="submit">筛选</button>
+      </form>
+      <table>
+        <thead><tr><th>ID</th><th>卡密</th><th>状态</th><th>售出时间</th><th>导入时间</th></tr></thead>
+        <tbody>
+          <% cardRows.forEach(c => { %>
+            <tr>
+              <td><%= c.id %></td>
+              <td><code><%= c.card_text %></code></td>
+              <td><%= c.is_sold ? '已售' : '未售' %></td>
+              <td><%= c.sold_at || '-' %></td>
+              <td><%= c.created_at %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
+
