@@ -1,0 +1,63 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= siteName %> - 商户信息</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="container">
+    <%- include('_nav') %>
+    <%- include('../_msg_modal') %>
+
+    <div class="card">
+      <h3>查询商户信息</h3>
+      <form method="post" action="/admin/merchant-info/query" class="stack-form">
+        <button type="submit">立即查询</button>
+      </form>
+      <% if (queriedAt) { %>
+        <p class="muted">查询时间：<%= queriedAt %></p>
+      <% } %>
+      <% if (queryError) { %>
+        <p class="muted" style="color:#b91c1c;"><%= queryError %></p>
+      <% } %>
+    </div>
+
+    <% if (merchantInfo) { %>
+      <%
+        function activeText(v) {
+          return String(v) === '1' ? '正常' : '封禁';
+        }
+        function settleTypeText(v) {
+          const n = Number(v);
+          if (n === 1) return '支付宝';
+          if (n === 2) return '微信';
+          if (n === 3) return 'QQ';
+          if (n === 4) return '银行卡';
+          return String(v || '-');
+        }
+      %>
+      <div class="card">
+        <h3>商户信息结果</h3>
+        <table>
+          <tbody>
+            <tr><th>返回码</th><td><%= merchantInfo.code ?? '-' %></td></tr>
+            <tr><th>返回信息</th><td><%= merchantInfo.msg || '-' %></td></tr>
+            <tr><th>商户ID</th><td><%= merchantInfo.pid || '-' %></td></tr>
+            <tr><th>商户状态</th><td><%= activeText(merchantInfo.active) %></td></tr>
+            <tr><th>商户余额</th><td><%= merchantInfo.money || '-' %></td></tr>
+            <tr><th>结算方式</th><td><%= settleTypeText(merchantInfo.type) %></td></tr>
+            <tr><th>结算账号</th><td><%= merchantInfo.account || '-' %></td></tr>
+            <tr><th>结算姓名</th><td><%= merchantInfo.username || '-' %></td></tr>
+            <tr><th>订单总数</th><td><%= merchantInfo.orders ?? '-' %></td></tr>
+            <tr><th>今日订单</th><td><%= merchantInfo.order_today ?? '-' %></td></tr>
+            <tr><th>昨日订单</th><td><%= merchantInfo.order_lastday ?? '-' %></td></tr>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </div>
+</body>
+</html>

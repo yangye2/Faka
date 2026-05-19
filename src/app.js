@@ -14,12 +14,14 @@ const {
   applyPayState,
   markOrderPaidAndDeliver,
   getOrderByNo,
+  addPaymentLog,
   getDashboardStats,
   listLatestOrders,
   listProductsBasic,
   listStockMapRows,
   listCardsByProduct,
   listOrdersPaged,
+  listPaymentLogsPaged,
   deleteOrderByNo,
   cleanupUnpaidOrdersOlderThan,
   ensureDatabaseReady,
@@ -28,7 +30,7 @@ const {
   getPaymentConfig,
   setPaymentConfig,
 } = require('./store');
-const { unifiedOrder, queryOrder, verifySign } = require('./payment');
+const { createPayment, queryPayment, queryMerchantInfo, buildSign, verifySign } = require('./payment');
 
 loadEnvFile(path.resolve(__dirname, '..', '.env'));
 
@@ -116,34 +118,41 @@ app.post('/buy', async (req, res) => {
       return redirectWithMsg(req, res, `/order/${order.order_no}`, '测试模式：已跳过支付下单，直接进入订单页');
     }
 
-    const notifyUrl = paymentConfig.notify_url || buildPublicUrl(req, '/payment/notify/cfyle');
+    const notifyUrl = paymentConfig.notify_url || buildPublicUrl(req, '/payment/notify/heisenlin');
     const returnUrl = paymentConfig.return_url || buildPublicUrl(req, `/payment/return/${orderNo}`);
-    const unifiedPayload = {
-      amount: order.amount_cents,
-      mchOrderNo: order.order_no,
-      subject: `${paymentConfig.subject_prefix}-${order.product_name}`.slice(0, 64),
-      body: paymentConfig.body_text,
-      reqTime: Date.now(),
+    const createPayload = {
+      type: paymentConfig.pay_type,
+      outTradeNo: order.order_no,
+      name: `${paymentConfig.subject_prefix}-${order.product_name}`.slice(0, 127),
+      money: centsToYuan(order.amount_cents),
       clientIp: getClientIp(req),
+      device: paymentConfig.device || detectDevice(req),
       notifyUrl,
       returnUrl,
-      extParam: JSON.stringify({ orderNo: order.order_no }),
+      param: JSON.stringify({ orderNo: order.order_no }),
     };
 
     paymentDebug('start pay request', {
       orderNo: order.order_no,
-      unifiedOrderUrl: paymentConfig.unified_order_url,
-      payload: sanitizeForLog(unifiedPayload),
+      mapiUrl: paymentConfig.mapi_url,
+      payload: sanitizeForLog(createPayload),
     });
+    writePaymentLog(
+      'create_payment_request',
+      order.order_no,
+      buildCreatePaymentLogRequest(paymentConfig, createPayload)
+    );
 
-    const response = await unifiedOrder(paymentConfig, unifiedPayload);
+    const response = await createPayment(paymentConfig, createPayload);
+    writePaymentLog('create_payment_response', order.order_no, response);
     paymentDebug('start pay response summary', {
       orderNo: order.order_no,
       code: response && response.code,
       msg: response && response.msg,
-      payOrderId: response && response.data && response.data.payOrderId,
-      orderState: response && response.data && response.data.orderState,
-      payDataType: response && response.data && response.data.payDataType,
+      tradeNo: response && response.trade_no,
+      payurl: response && response.payurl,
+      qrcode: response && response.qrcode,
+      urlscheme: response && response.urlscheme,
     });
 
     if (!isSuccessCode(response.code)) {
@@ -156,31 +165,22 @@ app.post('/buy', async (req, res) => {
       );
     }
 
-    const payData = response.data || {};
-    const orderState = resolvePayState(payData);
-    const payDataType = String(payData.payDataType || '').toLowerCase();
-    const payDataValue = String(payData.payData || '');
-    if (payDataType !== 'payurl' || !payDataValue) {
+    const payUrl = String(response.payurl || response.qrcode || response.urlscheme || '').trim();
+    if (!payUrl) {
       deleteOrderByNo(order.order_no);
       return redirectWithMsg(req, res, '/', '下单失败: 未返回有效支付链接');
     }
 
     updateOrderPaymentCreated(order.order_no, {
-      payOrderId: payData.payOrderId || '',
-      payUrl: payDataValue,
-      payState: orderState,
-      payMsg: getGatewayMsg(payData) || '',
+      payOrderId: response.trade_no || '',
+      payUrl,
+      payState: 1,
+      payMsg: getGatewayMsg(response) || '',
     });
-
-    if (orderState === 2) {
-      markOrderPaidAndDeliver(order.order_no, {
-        payOrderId: payData.payOrderId || '',
-        payMsg: '下单同步返回已支付',
-      });
-    }
 
     return res.redirect(`/order/${order.order_no}`);
   } catch (err) {
+    writePaymentLog('create_payment_exception', createdOrderNo, { message: err.message, stack: err.stack }, 'error');
     if (createdOrderNo) {
       deleteOrderByNo(createdOrderNo);
     }
@@ -231,33 +231,40 @@ app.post('/order/:orderNo/check-pay', async (req, res) => {
       return redirectWithMsg(req, res, `/order/${orderNo}`, '订单不存在');
     }
 
-    const response = await queryOrder(paymentConfig, {
-      mchOrderNo: order.order_no,
-      payOrderId: order.pay_order_id || '',
-      reqTime: Date.now(),
+    writePaymentLog(
+      'order_check_query_request',
+      order.order_no,
+      buildQueryPaymentLogRequest(paymentConfig, {
+        outTradeNo: order.order_no,
+        tradeNo: order.pay_order_id || '',
+      })
+    );
+    const response = await queryPayment(paymentConfig, {
+      outTradeNo: order.order_no,
+      tradeNo: order.pay_order_id || '',
     });
+    writePaymentLog('order_check_query_response', order.order_no, response);
 
     if (!isSuccessCode(response.code)) {
       return redirectWithMsg(req, res, `/order/${orderNo}`, `查单失败: ${getGatewayMsg(response) || '网关错误'}`);
     }
 
-    const payData = response.data || {};
-    const payState = resolvePayState(payData);
+    const payState = resolvePayState(response);
 
     applyPayState(order.order_no, payState, {
-      payOrderId: payData.payOrderId || '',
-      payMsg: getGatewayMsg(payData) || '',
+      payOrderId: response.trade_no || '',
+      payMsg: getGatewayMsg(response) || '',
     });
 
     if (payState === 2) {
       markOrderPaidAndDeliver(order.order_no, {
-        payOrderId: payData.payOrderId || '',
+        payOrderId: response.trade_no || '',
         payMsg: '主动查单确认已支付',
       });
       return redirectWithMsg(req, res, `/order/${orderNo}`, '支付成功，卡密已发放');
     }
 
-    return redirectWithMsg(req, res, `/order/${orderNo}`, `当前支付状态: ${payState}`);
+    return redirectWithMsg(req, res, `/order/${orderNo}`, `当前支付状态: ${payStateText(payState)}`);
   } catch (err) {
     return redirectWithMsg(req, res, `/order/${orderNo}`, err.message || '查单失败');
   }
@@ -268,7 +275,7 @@ app.get('/payment/return/:orderNo', (req, res) => {
   return redirectWithMsg(req, res, `/order/${orderNo}`, '已返回商户站点，请点击查单确认支付结果');
 });
 
-app.all('/payment/notify/cfyle', async (req, res) => {
+async function paymentNotifyHandler(req, res) {
   try {
     const paymentConfig = getPaymentConfig();
     if (!paymentConfig.enabled) {
@@ -276,20 +283,15 @@ app.all('/payment/notify/cfyle', async (req, res) => {
       return res.type('text/plain').send('fail');
     }
 
-    if (paymentConfig.callback_ip_check) {
-      const whitelist = String(paymentConfig.callback_ip_whitelist || '')
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean);
-      const callerIp = getClientIp(req);
-      if (whitelist.length && !whitelist.includes(callerIp)) {
-        paymentDebug('notify rejected by ip whitelist', { callerIp, whitelist });
-        return res.type('text/plain').send('fail');
-      }
-    }
-
     const hasBody = req.body && Object.keys(req.body).length > 0;
     const params = hasBody ? req.body : req.query;
+    const callbackOrderNo = String((params && params.out_trade_no) || '').trim();
+    writePaymentLog('notify_received', callbackOrderNo, {
+      method: req.method,
+      callerIp: getClientIp(req),
+      hasBody,
+      params,
+    });
     paymentDebug('notify received', {
       method: req.method,
       callerIp: getClientIp(req),
@@ -297,99 +299,132 @@ app.all('/payment/notify/cfyle', async (req, res) => {
       params: sanitizeForLog(params),
     });
 
-    if (!verifySign(params, paymentConfig.app_secret)) {
+    if (!verifySign(params, paymentConfig.key)) {
+      writePaymentLog('notify_sign_failed', callbackOrderNo, { params }, 'warn');
       paymentDebug('notify sign verify failed', { params: sanitizeForLog(params) });
       return res.type('text/plain').send('fail');
     }
 
-    if (String(params.mchNo || '') !== String(paymentConfig.mch_no || '')) {
-      paymentDebug('notify rejected: mchNo mismatch', {
-        incomingMchNo: params.mchNo || '',
-        configMchNo: paymentConfig.mch_no || '',
+    if (String(params.pid || '') !== String(paymentConfig.pid || '')) {
+      writePaymentLog(
+        'notify_pid_mismatch',
+        callbackOrderNo,
+        { incomingPid: params.pid || '', configPid: paymentConfig.pid || '', params },
+        'warn'
+      );
+      paymentDebug('notify rejected: pid mismatch', {
+        incomingPid: params.pid || '',
+        configPid: paymentConfig.pid || '',
       });
       return res.type('text/plain').send('fail');
     }
 
-    if (String(params.appId || '') !== String(paymentConfig.app_id || '')) {
-      paymentDebug('notify rejected: appId mismatch', {
-        incomingAppId: params.appId || '',
-        configAppId: paymentConfig.app_id || '',
-      });
+    const orderNo = String(params.out_trade_no || '').trim();
+    if (!orderNo) {
+      writePaymentLog('notify_missing_order_no', '', { params }, 'warn');
+      paymentDebug('notify rejected: missing out_trade_no', { params: sanitizeForLog(params) });
       return res.type('text/plain').send('fail');
     }
 
-    const mchOrderNo = String(params.mchOrderNo || '').trim();
-    if (!mchOrderNo) {
-      paymentDebug('notify rejected: missing mchOrderNo', { params: sanitizeForLog(params) });
-      return res.type('text/plain').send('fail');
-    }
-
-    const state = Number(params.state);
-    if (state === 2) {
-      const queryResp = await queryOrder(paymentConfig, {
-        mchOrderNo,
-        payOrderId: params.payOrderId || '',
-        reqTime: Date.now(),
+    const callbackState = resolvePayState(params);
+    if (callbackState === 2) {
+      writePaymentLog(
+        'notify_verify_query_request',
+        orderNo,
+        buildQueryPaymentLogRequest(paymentConfig, {
+          outTradeNo: orderNo,
+          tradeNo: params.trade_no || '',
+        })
+      );
+      const queryResp = await queryPayment(paymentConfig, {
+        outTradeNo: orderNo,
+        tradeNo: params.trade_no || '',
       });
+      writePaymentLog('notify_verify_query_response', orderNo, queryResp);
 
       if (!isSuccessCode(queryResp.code)) {
+        writePaymentLog(
+          'notify_verify_query_failed',
+          orderNo,
+          { tradeNo: params.trade_no || '', queryCode: queryResp.code, queryResp },
+          'warn'
+        );
         paymentDebug('notify paid verify failed: query api error', {
-          mchOrderNo,
-          payOrderId: params.payOrderId || '',
+          orderNo,
+          tradeNo: params.trade_no || '',
           queryCode: queryResp.code,
           queryMsg: getGatewayMsg(queryResp),
         });
         return res.type('text/plain').send('fail');
       }
 
-      const queryState = resolvePayState(queryResp?.data || {});
+      const queryState = resolvePayState(queryResp || {});
       if (queryState !== 2) {
+        writePaymentLog(
+          'notify_verify_query_unpaid',
+          orderNo,
+          { tradeNo: params.trade_no || '', queryState, queryResp },
+          'warn'
+        );
         paymentDebug('notify paid verify failed: query state not success', {
-          mchOrderNo,
-          payOrderId: params.payOrderId || '',
+          orderNo,
+          tradeNo: params.trade_no || '',
           queryState,
         });
         return res.type('text/plain').send('fail');
       }
 
-      const order = markOrderPaidAndDeliver(mchOrderNo, {
-        payOrderId: params.payOrderId || '',
-        payMsg: getGatewayMsg(queryResp?.data || {}) || '异步回调并查单确认已支付',
+      const order = markOrderPaidAndDeliver(orderNo, {
+        payOrderId: params.trade_no || '',
+        payMsg: getGatewayMsg(queryResp || {}) || '异步回调并查单确认已支付',
       });
       if (!order) {
-        paymentDebug('notify paid but order not found', { mchOrderNo, state });
+        writePaymentLog('notify_paid_order_not_found', orderNo, { tradeNo: params.trade_no || '' }, 'warn');
+        paymentDebug('notify paid but order not found', { orderNo, callbackState });
         return res.type('text/plain').send('fail');
       }
+      writePaymentLog('notify_paid_processed', orderNo, { tradeNo: params.trade_no || '', callbackState });
       paymentDebug('notify paid processed', {
-        mchOrderNo,
-        payOrderId: params.payOrderId || '',
-        state,
+        orderNo,
+        tradeNo: params.trade_no || '',
+        callbackState,
       });
       return res.type('text/plain').send('success');
     }
 
-    const order = applyPayState(mchOrderNo, state, {
-      payOrderId: params.payOrderId || '',
-      payMsg: params.errMsg || '',
+    const order = applyPayState(orderNo, callbackState, {
+      payOrderId: params.trade_no || '',
+      payMsg: params.msg || '',
     });
     if (!order) {
-      paymentDebug('notify state update failed: order not found', { mchOrderNo, state });
+      writePaymentLog(
+        'notify_state_update_order_not_found',
+        orderNo,
+        { tradeNo: params.trade_no || '', callbackState, params },
+        'warn'
+      );
+      paymentDebug('notify state update failed: order not found', { orderNo, callbackState });
       return res.type('text/plain').send('fail');
     }
 
+    writePaymentLog('notify_state_updated', orderNo, { tradeNo: params.trade_no || '', callbackState, params });
     paymentDebug('notify state updated', {
-      mchOrderNo,
-      payOrderId: params.payOrderId || '',
-      state,
-      errMsg: params.errMsg || '',
+      orderNo,
+      tradeNo: params.trade_no || '',
+      callbackState,
+      msg: params.msg || '',
     });
     return res.type('text/plain').send('success');
   } catch (err) {
+    writePaymentLog('notify_exception', '', { message: err.message, stack: err.stack }, 'error');
     console.error('notify error:', err.message);
     paymentDebug('notify exception', { message: err.message, stack: err.stack });
     return res.type('text/plain').send('fail');
   }
-});
+}
+
+app.all('/payment/notify/heisenlin', paymentNotifyHandler);
+app.all('/payment/notify/cfyle', paymentNotifyHandler);
 
 app.get('/admin/login', (req, res) => {
   if (req.session.admin) {
@@ -541,6 +576,62 @@ app.get('/admin/orders', requireAdmin, (req, res, next) => {
   }
 });
 
+app.get('/admin/payment-logs', requireAdmin, (req, res, next) => {
+  try {
+    const page = req.query.page;
+    const pageSize = req.query.page_size;
+    const logType = req.query.log_type;
+    const pager = listPaymentLogsPaged({ page, pageSize, logType });
+    const pageSizeOptions = [20, 50, 100, 200];
+    res.render('admin/payment-logs', {
+      logs: pager.rows,
+      pagination: pager,
+      pageSizeOptions,
+      currentLogType: pager.logType,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/admin/merchant-info', requireAdmin, (req, res) => {
+  return res.render('admin/merchant-info', {
+    merchantInfo: null,
+    queryError: '',
+    queriedAt: '',
+  });
+});
+
+app.post('/admin/merchant-info/query', requireAdmin, async (req, res) => {
+  try {
+    const paymentConfig = getPaymentConfig();
+    if (!paymentConfig.pid || !paymentConfig.key || !paymentConfig.api_url) {
+      return res.render('admin/merchant-info', {
+        merchantInfo: null,
+        queryError: '请先在系统设置中填写 pid/key/api_url',
+        queriedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+      });
+    }
+
+    writePaymentLog('merchant_query_request', '', buildMerchantQueryLogRequest(paymentConfig));
+    const data = await queryMerchantInfo(paymentConfig);
+    writePaymentLog('merchant_query_response', '', data);
+    writePaymentLog('merchant_query', '', { code: data.code, msg: data.msg || '' });
+    return res.render('admin/merchant-info', {
+      merchantInfo: data,
+      queryError: '',
+      queriedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    });
+  } catch (err) {
+    writePaymentLog('merchant_query_error', '', { message: err.message }, 'warn');
+    return res.render('admin/merchant-info', {
+      merchantInfo: null,
+      queryError: err.message || '查询失败',
+      queriedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    });
+  }
+});
+
 app.post('/admin/orders/:orderNo/check-pay', requireAdmin, async (req, res) => {
   const orderNo = String(req.params.orderNo || '').trim();
   const backUrl = buildAdminOrdersUrl(req);
@@ -556,33 +647,40 @@ app.post('/admin/orders/:orderNo/check-pay', requireAdmin, async (req, res) => {
       return redirectWithMsg(req, res, backUrl, '订单不存在');
     }
 
-    const response = await queryOrder(paymentConfig, {
-      mchOrderNo: order.order_no,
-      payOrderId: order.pay_order_id || '',
-      reqTime: Date.now(),
+    writePaymentLog(
+      'admin_order_check_query_request',
+      order.order_no,
+      buildQueryPaymentLogRequest(paymentConfig, {
+        outTradeNo: order.order_no,
+        tradeNo: order.pay_order_id || '',
+      })
+    );
+    const response = await queryPayment(paymentConfig, {
+      outTradeNo: order.order_no,
+      tradeNo: order.pay_order_id || '',
     });
+    writePaymentLog('admin_order_check_query_response', order.order_no, response);
 
     if (!isSuccessCode(response.code)) {
       return redirectWithMsg(req, res, backUrl, `查单失败: ${getGatewayMsg(response) || '网关错误'}`);
     }
 
-    const payData = response.data || {};
-    const payState = resolvePayState(payData);
+    const payState = resolvePayState(response);
 
     applyPayState(order.order_no, payState, {
-      payOrderId: payData.payOrderId || '',
-      payMsg: getGatewayMsg(payData) || '',
+      payOrderId: response.trade_no || '',
+      payMsg: getGatewayMsg(response) || '',
     });
 
     if (payState === 2) {
       markOrderPaidAndDeliver(order.order_no, {
-        payOrderId: payData.payOrderId || '',
+        payOrderId: response.trade_no || '',
         payMsg: '后台查单确认已支付',
       });
       return redirectWithMsg(req, res, backUrl, `订单 ${order.order_no} 支付成功，卡密已发放`);
     }
 
-    return redirectWithMsg(req, res, backUrl, `订单 ${order.order_no} 当前支付状态: ${payState}`);
+    return redirectWithMsg(req, res, backUrl, `订单 ${order.order_no} 当前支付状态: ${payStateText(payState)}`);
   } catch (err) {
     return redirectWithMsg(req, res, backUrl, err.message || '查单失败');
   }
@@ -625,19 +723,15 @@ app.post('/admin/settings/payment', requireAdmin, (req, res) => {
   try {
     setPaymentConfig({
       enabled: req.body.enabled === 'on',
-      unified_order_url: req.body.unified_order_url,
-      query_order_url: req.body.query_order_url,
-      mch_no: req.body.mch_no,
-      app_id: req.body.app_id,
-      app_secret: req.body.app_secret,
-      way_code: req.body.way_code,
-      callback_ip_check: req.body.callback_ip_check === 'on',
-      callback_ip_whitelist: req.body.callback_ip_whitelist,
+      mapi_url: req.body.mapi_url,
+      api_url: req.body.api_url,
+      pid: req.body.pid,
+      key: req.body.key,
+      pay_type: req.body.pay_type,
+      device: req.body.device,
       notify_url: req.body.notify_url,
       return_url: req.body.return_url,
       subject_prefix: req.body.subject_prefix,
-      body_text: req.body.body_text,
-      version: req.body.version,
     });
 
     return redirectWithMsg(req, res, '/admin/settings', '支付配置已保存');
@@ -689,7 +783,7 @@ function loadEnvFile(envPath) {
 
 function isSuccessCode(code) {
   const text = String(code || '').trim();
-  return text === '0' || text.startsWith('0-');
+  return text === '1' || text === '0' || text.startsWith('0-');
 }
 
 function buildPublicUrl(req, pathname) {
@@ -766,14 +860,29 @@ function clampPositiveInt(value, fallback) {
 }
 
 function resolvePayState(payData) {
+  if (!payData || typeof payData !== 'object') return 1;
+
+  const tradeStatus = String(payData.trade_status || '').trim().toUpperCase();
+  if (tradeStatus) {
+    return tradeStatus === 'TRADE_SUCCESS' ? 2 : 0;
+  }
+
+  if (payData.status !== undefined && payData.status !== null && payData.status !== '') {
+    const status = Number(payData.status);
+    return status === 1 ? 2 : 0;
+  }
+
   const stateVal =
-    payData && payData.orderState !== undefined && payData.orderState !== null && payData.orderState !== ''
+    payData.orderState !== undefined && payData.orderState !== null && payData.orderState !== ''
       ? payData.orderState
-      : payData && payData.state !== undefined
+      : payData.state !== undefined
         ? payData.state
         : '';
   const n = Number(stateVal);
-  return Number.isInteger(n) && n >= 0 ? n : 1;
+  if (Number.isInteger(n) && n >= 0) {
+    return n === 1 ? 1 : n;
+  }
+  return 1;
 }
 
 function getGatewayMsg(obj) {
@@ -788,4 +897,85 @@ function buildAdminOrdersUrl(req) {
   if (page) parts.push(`page=${encodeURIComponent(page)}`);
   if (pageSize) parts.push(`page_size=${encodeURIComponent(pageSize)}`);
   return `/admin/orders${parts.length ? `?${parts.join('&')}` : ''}`;
+}
+
+function writePaymentLog(scene, orderNo, payload, level = 'info') {
+  try {
+    addPaymentLog(scene, orderNo, JSON.stringify(payload || {}), level);
+  } catch (_err) {
+    // ignore log write failure
+  }
+}
+
+function buildCreatePaymentLogRequest(paymentConfig, payload) {
+  const body = {
+    pid: String(paymentConfig.pid || ''),
+    type: String(payload.type || paymentConfig.pay_type || ''),
+    out_trade_no: String(payload.outTradeNo || ''),
+    notify_url: String(payload.notifyUrl || ''),
+    return_url: String(payload.returnUrl || ''),
+    name: String(payload.name || ''),
+    money: String(payload.money || ''),
+    clientip: String(payload.clientIp || ''),
+    device: String(payload.device || paymentConfig.device || ''),
+    param: String(payload.param || ''),
+    sign_type: 'MD5',
+  };
+  body.sign = buildSign(body, paymentConfig.key);
+  return {
+    url: paymentConfig.mapi_url,
+    method: 'POST',
+    body,
+  };
+}
+
+function buildQueryPaymentLogRequest(paymentConfig, payload) {
+  return {
+    url: paymentConfig.api_url,
+    method: 'GET',
+    params: {
+      act: 'order',
+      pid: String(paymentConfig.pid || ''),
+      key: String(paymentConfig.key || ''),
+      trade_no: String(payload.tradeNo || ''),
+      out_trade_no: String(payload.outTradeNo || ''),
+    },
+  };
+}
+
+function buildMerchantQueryLogRequest(paymentConfig) {
+  return {
+    url: paymentConfig.api_url,
+    method: 'GET',
+    params: {
+      act: 'query',
+      pid: String(paymentConfig.pid || ''),
+      key: String(paymentConfig.key || ''),
+    },
+  };
+}
+
+function payStateText(state) {
+  const n = Number(state);
+  if (n === 0) return '未支付';
+  if (n === 1) return '支付中';
+  if (n === 2) return '支付成功';
+  if (n === 3) return '支付失败';
+  if (n === 4) return '支付关闭';
+  if (n === 5) return '已退款';
+  if (n === 6) return '订单关闭';
+  return `状态码${state}`;
+}
+
+function centsToYuan(cents) {
+  return (Number(cents || 0) / 100).toFixed(2);
+}
+
+function detectDevice(req) {
+  const ua = String(req.headers['user-agent'] || '').toLowerCase();
+  if (ua.includes('micromessenger')) return 'wechat';
+  if (ua.includes('qq/')) return 'qq';
+  if (ua.includes('alipayclient')) return 'alipay';
+  if (ua.includes('mobile')) return 'mobile';
+  return 'pc';
 }

@@ -6,6 +6,7 @@ const dataDir = path.resolve(__dirname, '..', 'data');
 const dbFile = path.join(dataDir, 'store.db');
 const legacyDataFile = path.join(dataDir, 'store.json');
 const DEFAULT_SITE_NAME = '简易自动发卡平台';
+const SCHEMA_VERSION = 3;
 const dbExistedBeforeOpen = fs.existsSync(dbFile);
 
 if (!fs.existsSync(dataDir)) {
@@ -64,14 +65,103 @@ function initDb() {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS payment_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scene TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      order_no TEXT NOT NULL DEFAULT '',
+      payload TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_cards_product_sold ON cards(product_id, is_sold);
     CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
     CREATE INDEX IF NOT EXISTS idx_orders_created_id ON orders(id DESC);
+    CREATE INDEX IF NOT EXISTS idx_payment_logs_created_id ON payment_logs(id DESC);
   `);
 
   const stmt = db.prepare('INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)');
   stmt.run('site_name', DEFAULT_SITE_NAME);
   stmt.run('payment_config', JSON.stringify(createDefaultPaymentConfig()));
+  runDbMigrations();
+}
+
+function runDbMigrations() {
+  let version = getUserVersion();
+  if (version >= SCHEMA_VERSION) return;
+  if (version < 1) {
+    migrateToV1();
+    setUserVersion(1);
+    version = 1;
+  }
+  if (version < 2) {
+    migrateToV2();
+    setUserVersion(2);
+    version = 2;
+  }
+  if (version < 3) {
+    migrateToV3();
+    setUserVersion(3);
+    version = 3;
+  }
+}
+
+function migrateToV1() {
+  // v1: 补齐历史库支付相关字段，避免旧库启动时报列不存在
+  ensureColumn('products', 'description', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('products', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn('cards', 'sold_at', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('cards', 'order_id', 'INTEGER');
+  ensureColumn('orders', 'buyer_email', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('orders', 'pay_order_id', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('orders', 'pay_state', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('orders', 'pay_url', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('orders', 'paid_at', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('orders', 'pay_msg', "TEXT NOT NULL DEFAULT ''");
+  ensureColumn('orders', 'pay_last_query_at', "TEXT NOT NULL DEFAULT ''");
+}
+
+function migrateToV2() {
+  // v2: 增加支付日志表
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS payment_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scene TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      order_no TEXT NOT NULL DEFAULT '',
+      payload TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
+function migrateToV3() {
+  // v3: 统一补齐索引
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cards_product_sold ON cards(product_id, is_sold);
+    CREATE INDEX IF NOT EXISTS idx_orders_product_id ON orders(product_id);
+    CREATE INDEX IF NOT EXISTS idx_orders_created_id ON orders(id DESC);
+    CREATE INDEX IF NOT EXISTS idx_payment_logs_created_id ON payment_logs(id DESC);
+  `);
+}
+
+function getUserVersion() {
+  const row = db.prepare('PRAGMA user_version').get();
+  return Number((row && row.user_version) || 0);
+}
+
+function setUserVersion(version) {
+  db.exec(`PRAGMA user_version = ${Number(version)}`);
+}
+
+function ensureColumn(table, column, definition) {
+  if (hasColumn(table, column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+function hasColumn(table, column) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.some((r) => String(r.name || '') === String(column));
 }
 
 function maybeMigrateFromJson() {
@@ -220,23 +310,16 @@ function withTransaction(fn) {
 function createDefaultPaymentConfig() {
   return {
     enabled: false,
-    unified_order_url: 'https://mchapi.ttcfapi.com/api/pay/unifiedOrder',
-    query_order_url: 'https://mchapi.ttcfapi.com/api/pay/query',
-    mch_no: 'M1779089580',
-    app_id: '6a0ac0ace4b04da0a3253d3f',
-    app_secret:
-      'ixIGPkSvwVWZUqJFgcbQysJfWYN5OqthTaTjUvvvdsqvAx7wPgvWDBVnkNgLL8a3IjXoPd8DXaAosvXrBnPinLkf0GNDzBIgCeL4wCkt0IcEeBMg0vTha2x6Ad2qjrP2',
-    way_code: '',
-    callback_ip_check: false,
-    callback_ip_whitelist:
-      '47.238.166.160,123.129.241.66,192.140.174.29,123.129.241.76,27.25.147.190',
+    mapi_url: 'https://pay.heisenlin.dpdns.org/mapi.php',
+    api_url: 'https://pay.heisenlin.dpdns.org/api.php',
+    pid: '',
+    key: '',
+    pay_type: 'alipay',
+    device: 'pc',
     notify_url: '',
     return_url: '',
     subject_prefix: '卡密购买',
-    body_text: '自动发卡商品',
-    version: '1.0',
     sign_type: 'MD5',
-    currency: 'cny',
   };
 }
 
@@ -303,6 +386,17 @@ function mapOrderRow(row) {
     paid_at: String(row.paid_at || ''),
     pay_msg: String(row.pay_msg || ''),
     pay_last_query_at: String(row.pay_last_query_at || ''),
+  };
+}
+
+function mapPaymentLogRow(row) {
+  return {
+    id: Number(row.id),
+    scene: String(row.scene || ''),
+    level: String(row.level || 'info'),
+    order_no: String(row.order_no || ''),
+    payload: String(row.payload || ''),
+    created_at: String(row.created_at || ''),
   };
 }
 
@@ -586,6 +680,24 @@ function getOrderByNo(orderNo) {
   return row ? mapOrderRow(row) : null;
 }
 
+function addPaymentLog(scene, orderNo, payload, level = 'info') {
+  db.prepare('INSERT INTO payment_logs(scene, level, order_no, payload, created_at) VALUES (?, ?, ?, ?, ?)').run(
+    String(scene || ''),
+    String(level || 'info'),
+    String(orderNo || ''),
+    String(payload || ''),
+    now()
+  );
+
+  const over = db.prepare('SELECT COUNT(1) AS c FROM payment_logs').get();
+  const count = Number(over.c || 0);
+  if (count > 3000) {
+    db.prepare(
+      'DELETE FROM payment_logs WHERE id IN (SELECT id FROM payment_logs ORDER BY id ASC LIMIT ?)'
+    ).run(count - 3000);
+  }
+}
+
 function getDashboardStats() {
   const productCount = Number(db.prepare('SELECT COUNT(1) AS c FROM products').get().c || 0);
   const unsoldCount = Number(db.prepare('SELECT COUNT(1) AS c FROM cards WHERE is_sold = 0').get().c || 0);
@@ -675,6 +787,41 @@ function listOrdersPaged(options = {}) {
   };
 }
 
+function listPaymentLogsPaged(options = {}) {
+  const logType = normalizePaymentLogType(options.logType);
+  const whereClause =
+    logType === 'callback' ? " WHERE scene LIKE 'notify_%'" : logType === 'request' ? " WHERE scene NOT LIKE 'notify_%'" : '';
+
+  const totalSql = `SELECT COUNT(1) AS c FROM payment_logs${whereClause}`;
+  const total = Number(db.prepare(totalSql).get().c || 0);
+  const pageSize = clampInt(options.pageSize, 50, 20, 200);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = clampInt(options.page, 1, 1, totalPages);
+  const start = (page - 1) * pageSize;
+
+  const rowsSql = `SELECT * FROM payment_logs${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`;
+  const rows = db
+    .prepare(rowsSql)
+    .all(pageSize, start)
+    .map(mapPaymentLogRow);
+
+  return {
+    rows,
+    total,
+    page,
+    pageSize,
+    totalPages,
+    logType,
+  };
+}
+
+function normalizePaymentLogType(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'request') return 'request';
+  if (text === 'callback') return 'callback';
+  return 'all';
+}
+
 function deleteOrderByNo(orderNo) {
   const info = db.prepare('DELETE FROM orders WHERE order_no = ?').run(String(orderNo || ''));
   return Number(info.changes || 0) > 0;
@@ -751,24 +898,19 @@ function setPaymentConfig(input) {
   delete next.api_base_url;
 
   next.enabled = !!input.enabled;
-  next.unified_order_url = String(input.unified_order_url || '').trim();
-  next.query_order_url = String(input.query_order_url || '').trim();
-  next.mch_no = String(input.mch_no || '').trim();
-  next.app_id = String(input.app_id || '').trim();
-  next.app_secret = String(input.app_secret || '').trim();
-  next.way_code = String(input.way_code || '').trim();
-  next.callback_ip_check = !!input.callback_ip_check;
-  next.callback_ip_whitelist = String(input.callback_ip_whitelist || '').trim();
+  next.mapi_url = String(input.mapi_url || '').trim();
+  next.api_url = String(input.api_url || '').trim();
+  next.pid = String(input.pid || '').trim();
+  next.key = String(input.key || '').trim();
+  next.pay_type = String(input.pay_type || '').trim() || 'alipay';
+  next.device = String(input.device || '').trim() || 'pc';
   next.notify_url = String(input.notify_url || '').trim();
   next.return_url = String(input.return_url || '').trim();
   next.subject_prefix = String(input.subject_prefix || '').trim() || '卡密购买';
-  next.body_text = String(input.body_text || '').trim() || '自动发卡商品';
-  next.version = String(input.version || '').trim() || '1.0';
   next.sign_type = 'MD5';
-  next.currency = 'cny';
 
   if (next.enabled) {
-    const required = ['unified_order_url', 'query_order_url', 'mch_no', 'app_id', 'app_secret', 'way_code'];
+    const required = ['mapi_url', 'api_url', 'pid', 'key', 'pay_type'];
     for (const key of required) {
       if (!next[key]) {
         throw new Error('启用支付时必须填写完整配置');
@@ -874,6 +1016,7 @@ module.exports = {
   applyPayState,
   markOrderPaidAndDeliver,
   getOrderByNo,
+  addPaymentLog,
   getDashboardStats,
   listLatestOrders,
   listProductsBasic,
@@ -881,6 +1024,7 @@ module.exports = {
   listCardsByProduct,
   listOrders,
   listOrdersPaged,
+  listPaymentLogsPaged,
   deleteOrderByNo,
   cleanupUnpaidOrdersOlderThan,
   ensureDatabaseReady,

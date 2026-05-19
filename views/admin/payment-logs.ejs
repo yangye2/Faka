@@ -1,0 +1,95 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= siteName %> - 支付日志</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <div class="container">
+    <%- include('_nav') %>
+    <%- include('../_msg_modal') %>
+
+    <%
+      const logType = currentLogType || 'all';
+      const selAll = logType === 'all' ? 'selected' : '';
+      const selReq = logType === 'request' ? 'selected' : '';
+      const selCb = logType === 'callback' ? 'selected' : '';
+      function pageLink(targetPage) {
+        return '/admin/payment-logs?page=' + targetPage + '&page_size=' + pagination.pageSize + '&log_type=' + encodeURIComponent(logType);
+      }
+    %>
+
+    <div class="card">
+      <h3>支付日志（共 <%= pagination.total %> 条）</h3>
+      <form method="get" action="/admin/payment-logs" class="filter-form">
+        <div class="inline-fields">
+          <label>
+            类型
+            <select name="log_type">
+              <option value="all" <%= selAll %>>全部</option>
+              <option value="request" <%= selReq %>>请求</option>
+              <option value="callback" <%= selCb %>>回调</option>
+            </select>
+          </label>
+          <label>
+            每页
+            <select name="page_size">
+              <% for (const size of pageSizeOptions) { %>
+                <option value="<%= size %>" <%= pagination.pageSize === size ? 'selected' : '' %>><%= size %> 条</option>
+              <% } %>
+            </select>
+          </label>
+          <label>
+            页码
+            <input type="number" name="page" min="1" max="<%= pagination.totalPages %>" value="<%= pagination.page %>" />
+          </label>
+        </div>
+        <button type="submit">查询</button>
+      </form>
+
+      <table>
+        <thead>
+          <tr><th>ID</th><th>时间</th><th>事件</th><th>级别</th><th>订单号</th><th>参数</th></tr>
+        </thead>
+        <tbody>
+          <% if (!logs.length) { %>
+            <tr><td colspan="6">暂无日志</td></tr>
+          <% } %>
+          <% for (const item of logs) { %>
+            <tr>
+              <td><%= item.id %></td>
+              <td><%= item.created_at %></td>
+              <td><%= item.scene %></td>
+              <td><%= item.level %></td>
+              <td><%= item.order_no || '-' %></td>
+              <td><pre class="log-json"><%= item.payload %></pre></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+
+      <div class="pager">
+        <span>第 <%= pagination.page %> / <%= pagination.totalPages %> 页</span>
+        <% if (pagination.page > 1) { %>
+          <a class="link-btn" href="<%= pageLink(1) %>">首页</a>
+          <a class="link-btn" href="<%= pageLink(pagination.page - 1) %>">上一页</a>
+        <% } else { %>
+          <span class="pager-disabled">首页</span>
+          <span class="pager-disabled">上一页</span>
+        <% } %>
+
+        <% if (pagination.page < pagination.totalPages) { %>
+          <a class="link-btn" href="<%= pageLink(pagination.page + 1) %>">下一页</a>
+          <a class="link-btn" href="<%= pageLink(pagination.totalPages) %>">末页</a>
+        <% } else { %>
+          <span class="pager-disabled">下一页</span>
+          <span class="pager-disabled">末页</span>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

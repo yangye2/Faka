@@ -23,25 +23,21 @@
     </div>
 
     <div class="card">
-      <h3>支付配置（CFYLE）</h3>
+      <h3>支付配置（易支付）</h3>
       <form method="post" action="/admin/settings/payment" class="stack-form">
         <label><input type="checkbox" name="enabled" <%= paymentConfig.enabled ? 'checked' : '' %> /> 启用支付通道</label>
-        <input name="unified_order_url" value="<%= paymentConfig.unified_order_url %>" placeholder="下单地址 unifiedOrder URL" />
-        <input name="query_order_url" value="<%= paymentConfig.query_order_url %>" placeholder="查单地址 query URL" />
-        <input name="mch_no" value="<%= paymentConfig.mch_no %>" placeholder="商户号 mchNo" />
-        <input name="app_id" value="<%= paymentConfig.app_id %>" placeholder="应用ID appId" />
-        <input name="app_secret" value="<%= paymentConfig.app_secret %>" placeholder="商户密钥 key" />
-        <input name="way_code" value="<%= paymentConfig.way_code %>" placeholder="通道编码 wayCode" />
-        <label><input type="checkbox" name="callback_ip_check" <%= paymentConfig.callback_ip_check ? 'checked' : '' %> /> 启用回调IP白名单校验</label>
-        <input name="callback_ip_whitelist" value="<%= paymentConfig.callback_ip_whitelist %>" placeholder="回调IP白名单，逗号分隔" />
-        <input name="notify_url" value="<%= paymentConfig.notify_url %>" placeholder="异步回调地址（可空，默认本站/payment/notify/cfyle）" />
+        <input name="mapi_url" value="<%= paymentConfig.mapi_url %>" placeholder="API下单地址 mapi.php" />
+        <input name="api_url" value="<%= paymentConfig.api_url %>" placeholder="API查询地址 api.php" />
+        <input name="pid" value="<%= paymentConfig.pid %>" placeholder="商户ID pid" />
+        <input name="key" value="<%= paymentConfig.key %>" placeholder="商户密钥 key" />
+        <input name="pay_type" value="<%= paymentConfig.pay_type %>" placeholder="支付方式 type（如 alipay/wxpay）" />
+        <input name="device" value="<%= paymentConfig.device %>" placeholder="设备类型 device（pc/mobile/wechat/alipay/jump）" />
+        <input name="notify_url" value="<%= paymentConfig.notify_url %>" placeholder="异步回调地址（可空，默认本站/payment/notify/heisenlin）" />
         <input name="return_url" value="<%= paymentConfig.return_url %>" placeholder="同步跳转地址（可空，默认本站订单页）" />
         <input name="subject_prefix" value="<%= paymentConfig.subject_prefix %>" placeholder="订单标题前缀" />
-        <input name="body_text" value="<%= paymentConfig.body_text %>" placeholder="订单描述 body" />
-        <input name="version" value="<%= paymentConfig.version %>" placeholder="接口版本，默认1.0" />
         <button type="submit">保存支付配置</button>
       </form>
-      <p class="muted">签名规则：按文档ASCII排序拼接后追加 <code>&key=商户密钥</code>，MD5大写。</p>
+      <p class="muted">签名规则：按参数名ASCII升序拼接，过滤空值与 <code>sign/sign_type</code>，末尾直接拼接商户密钥后做MD5小写。</p>
       <p class="muted">回调返回值必须是小写 <code>success</code>。</p>
     </div>
   </div>

@@ -5,7 +5,7 @@
 - 下单后发起支付，支付成功后自动发卡
 - 后台登录
 - 后台系统设置（站点名称可配置）
-- 后台支付配置（网关地址、商户号、AppId、密钥、通道编码）
+- 后台支付配置（易支付：PID/KEY、下单地址、查单地址、支付方式、设备类型）
 - 后台商品管理（增/删/上下架）
 - 后台卡密批量导入（每行一条）
 - 后台订单查看
@@ -71,6 +71,7 @@
 - SQLite 数据库存放在容器内 `/app/data/store.db`
 - 已通过 `docker-compose.yml` 挂载到宿主机 `./data`，重建容器不会丢数据
 - 如果 `data/store.json` 存在且数据库为空，服务首次启动会自动迁移旧 JSON 数据到 SQLite
+- 服务启动时会自动执行 SQLite Schema 增量升级（`PRAGMA user_version`），旧库可直接升级启动
 
 ### 升级说明（Git + Docker）
 在 `/opt/faka` 目录执行：
@@ -129,11 +130,11 @@ sudo docker compose up -d --build
 > 仅为演示版，不包含真实支付回调、风控、审计日志、加密存储等生产能力。
 
 ## 支付对接说明（已接入）
-- 下单接口：`/api/pay/unifiedOrder`
-- 查单接口：`/api/pay/query`
-- 本地回调地址：`/payment/notify/cfyle`
+- 支付网关文档：`https://pay.heisenlin.dpdns.org/doc.html`
+- 下单接口：`https://pay.heisenlin.dpdns.org/mapi.php`
+- 查单接口：`https://pay.heisenlin.dpdns.org/api.php?act=order`
+- 本地回调地址：`/payment/notify/heisenlin`（兼容旧地址 `/payment/notify/cfyle`）
 - 回调处理后返回：`success`（小写）
 - 支持配置固定地址：
-  - 下单URL：`https://mchapi.ttcfapi.com/api/pay/unifiedOrder`
-  - 查单URL：`https://mchapi.ttcfapi.com/api/pay/query`
-  - 回调IP白名单：`47.238.166.160,123.129.241.66,192.140.174.29,123.129.241.76,27.25.147.190`
+  - API下单URL：`https://pay.heisenlin.dpdns.org/mapi.php`
+  - API查单URL：`https://pay.heisenlin.dpdns.org/api.php`
