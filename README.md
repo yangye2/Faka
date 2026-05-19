@@ -109,6 +109,19 @@ sudo docker compose logs -f faka
 sudo docker stats
 ```
 
+### 常见问题：`unable to open database file`
+如果容器日志出现：
+```text
+Error: unable to open database file
+```
+通常是宿主机挂载目录权限导致。可执行：
+```bash
+cd /opt/faka
+sudo mkdir -p data
+sudo chmod -R 775 data
+sudo docker compose up -d --build
+```
+
 ## 默认后台账号
 - 用户名: `admin`
 - 密码: `admin123`
