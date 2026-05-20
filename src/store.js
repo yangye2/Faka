@@ -6,7 +6,8 @@ const dataDir = path.resolve(__dirname, '..', 'data');
 const dbFile = path.join(dataDir, 'store.db');
 const legacyDataFile = path.join(dataDir, 'store.json');
 const DEFAULT_SITE_NAME = '简易自动发卡平台';
-const SCHEMA_VERSION = 5;
+const DEFAULT_ORDER_PAY_EXPIRE_MINUTES = 30;
+const SCHEMA_VERSION = 6;
 const dbExistedBeforeOpen = fs.existsSync(dbFile);
 
 if (!fs.existsSync(dataDir)) {
@@ -85,6 +86,7 @@ function initDb() {
   const stmt = db.prepare('INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)');
   stmt.run('site_name', DEFAULT_SITE_NAME);
   stmt.run('payment_config', JSON.stringify(createDefaultPaymentConfig()));
+  stmt.run('order_pay_expire_minutes', String(DEFAULT_ORDER_PAY_EXPIRE_MINUTES));
   runDbMigrations();
 }
 
@@ -115,6 +117,11 @@ function runDbMigrations() {
     migrateToV5();
     setUserVersion(5);
     version = 5;
+  }
+  if (version < 6) {
+    migrateToV6();
+    setUserVersion(6);
+    version = 6;
   }
 }
 
@@ -166,6 +173,14 @@ function migrateToV4() {
 function migrateToV5() {
   // v5: 记录支付返回类型（payurl / qrcode / urlscheme）
   ensureColumn('orders', 'pay_data_type', "TEXT NOT NULL DEFAULT ''");
+}
+
+function migrateToV6() {
+  // v6: 增加订单支付倒计时配置项
+  db.prepare('INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)').run(
+    'order_pay_expire_minutes',
+    String(DEFAULT_ORDER_PAY_EXPIRE_MINUTES)
+  );
 }
 
 function getUserVersion() {
@@ -912,6 +927,17 @@ function setSiteName(siteName) {
   setSetting('site_name', nextName.slice(0, 60));
 }
 
+function getOrderPayExpireMinutes() {
+  const raw = getSetting('order_pay_expire_minutes', String(DEFAULT_ORDER_PAY_EXPIRE_MINUTES));
+  return clampInt(raw, DEFAULT_ORDER_PAY_EXPIRE_MINUTES, 1, 180);
+}
+
+function setOrderPayExpireMinutes(minutes) {
+  const next = clampInt(minutes, DEFAULT_ORDER_PAY_EXPIRE_MINUTES, 1, 180);
+  setSetting('order_pay_expire_minutes', String(next));
+  return next;
+}
+
 function getPaymentConfig() {
   const raw = getSetting('payment_config', '{}');
   let parsed = {};
@@ -1076,6 +1102,8 @@ module.exports = {
   ensureDatabaseReady,
   getSiteName,
   setSiteName,
+  getOrderPayExpireMinutes,
+  setOrderPayExpireMinutes,
   getPaymentConfig,
   setPaymentConfig,
 };

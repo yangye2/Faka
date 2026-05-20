@@ -28,6 +28,8 @@ const {
   ensureDatabaseReady,
   getSiteName,
   setSiteName,
+  getOrderPayExpireMinutes,
+  setOrderPayExpireMinutes,
   getPaymentConfig,
   setPaymentConfig,
 } = require('./store');
@@ -201,9 +203,9 @@ app.get('/order/:orderNo', (req, res, next) => {
   try {
     const order = getOrderByNo(req.params.orderNo);
     if (!order) {
-      return res.status(404).render('order', { order: null });
+      return res.status(404).render('order', { order: null, orderPayExpireMinutes: getOrderPayExpireMinutes() });
     }
-    res.render('order', { order });
+    res.render('order', { order, orderPayExpireMinutes: getOrderPayExpireMinutes() });
   } catch (err) {
     next(err);
   }
@@ -251,19 +253,10 @@ app.get('/order/:orderNo/poll-status', async (req, res) => {
       });
     }
 
-    writePaymentLog(
-      'order_poll_query_request',
-      order.order_no,
-      buildQueryPaymentLogRequest(paymentConfig, {
-        outTradeNo: order.order_no,
-        tradeNo: order.pay_order_id || '',
-      })
-    );
     const response = await queryPayment(paymentConfig, {
       outTradeNo: order.order_no,
       tradeNo: order.pay_order_id || '',
     });
-    writePaymentLog('order_poll_query_response', order.order_no, response);
 
     if (!isSuccessCode(response.code)) {
       return res.json({
@@ -297,6 +290,30 @@ app.get('/order/:orderNo/poll-status', async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: err.message || '轮询失败',
+    });
+  }
+});
+
+app.post('/order/:orderNo/expire-unpaid', (req, res) => {
+  const orderNo = String(req.params.orderNo || '').trim();
+  try {
+    const order = getOrderByNo(orderNo);
+    if (!order) {
+      return res.json({ ok: true, deleted: false });
+    }
+
+    const paid = Number(order.pay_state) === 2;
+    const delivered = order.status === 'delivered' || order.status === 'out_of_stock';
+    if (paid || delivered) {
+      return res.json({ ok: true, deleted: false });
+    }
+
+    const deleted = deleteOrderByNo(orderNo);
+    return res.json({ ok: true, deleted });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      message: err.message || '删除订单失败',
     });
   }
 });
@@ -814,6 +831,7 @@ app.get('/admin/settings', requireAdmin, (req, res, next) => {
   try {
     res.render('admin/settings', {
       currentSiteName: getSiteName(),
+      orderPayExpireMinutes: getOrderPayExpireMinutes(),
       paymentConfig: getPaymentConfig(),
     });
   } catch (err) {
@@ -826,6 +844,15 @@ app.post('/admin/settings/site-name', requireAdmin, (req, res) => {
     const siteName = String(req.body.site_name || '');
     setSiteName(siteName);
     return redirectWithMsg(req, res, '/admin/settings', '站点名称已更新');
+  } catch (err) {
+    return redirectWithMsg(req, res, '/admin/settings', err.message || '更新失败');
+  }
+});
+
+app.post('/admin/settings/order-payment', requireAdmin, (req, res) => {
+  try {
+    const minutes = setOrderPayExpireMinutes(req.body.order_pay_expire_minutes);
+    return redirectWithMsg(req, res, '/admin/settings', `支付倒计时已更新为 ${minutes} 分钟`);
   } catch (err) {
     return redirectWithMsg(req, res, '/admin/settings', err.message || '更新失败');
   }

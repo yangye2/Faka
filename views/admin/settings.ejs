@@ -22,6 +22,23 @@
       <p class="muted">保存后前台和后台会立即显示新名称。</p>
     </div>
 
+    <div class="card narrow">
+      <h3>订单支付设置</h3>
+      <form method="post" action="/admin/settings/order-payment" class="stack-form">
+        <input
+          name="order_pay_expire_minutes"
+          type="number"
+          min="1"
+          max="180"
+          step="1"
+          value="<%= orderPayExpireMinutes %>"
+          required
+        />
+        <button type="submit">保存倒计时</button>
+      </form>
+      <p class="muted">订单支付页倒计时到 0 后，会删除未支付订单并返回首页。</p>
+    </div>
+
     <div class="card">
       <h3>支付配置（易支付）</h3>
       <form method="post" action="/admin/settings/payment" class="stack-form">

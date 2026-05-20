@@ -95,7 +95,7 @@
             <% } %>
             <div class="pay-countdown-card">
               <p class="pay-countdown-label">剩余支付时间</p>
-              <p class="pay-countdown-time" id="payCountdown">30:00</p>
+              <p class="pay-countdown-time" id="payCountdown"><%= String(Math.max(1, Number(orderPayExpireMinutes) || 30)).padStart(2, '0') %>:00</p>
               <p class="pay-countdown-status" id="payingTip">等待支付...</p>
             </div>
             <% if (displayType === 'payurl') { %>
@@ -129,8 +129,13 @@
                 var key = 'pay_opened_<%= order.order_no %>';
                 var startKey = 'pay_poll_started_at_<%= order.order_no %>';
                 var countdownTimer = null;
+                var pollTimer = null;
                 var pollStartedAt = 0;
-                var maxDurationMs = 30 * 60 * 1000;
+                var maxDurationMs = <%= Math.max(1, Number(orderPayExpireMinutes) || 30) %> * 60 * 1000;
+                var pollMaxDurationMs = 3 * 60 * 1000;
+                var pollIntervalMs = 5 * 1000;
+                var pollInFlight = false;
+                var expireHandled = false;
 
                 function enableCheckButton() {
                   checkBtn.disabled = false;
@@ -154,11 +159,11 @@
                   var remain = Math.max(0, pollStartedAt + maxDurationMs - Date.now());
                   countdownNode.textContent = formatRemain(remain);
                   if (remain <= 0) {
-                    showTip('支付超时，请重新下单。');
                     if (countdownTimer) {
                       clearInterval(countdownTimer);
                       countdownTimer = null;
                     }
+                    expireUnpaidAndBackHome();
                   }
                 }
 
@@ -224,6 +229,97 @@
                   }
                 }
 
+                function stopPolling() {
+                  if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                  }
+                }
+
+                function isPollingExpired() {
+                  if (!pollStartedAt) return true;
+                  return Date.now() - pollStartedAt >= pollMaxDurationMs;
+                }
+
+                function refreshIfPaid() {
+                  window.location.reload();
+                }
+
+                function pollOnce() {
+                  if (pollInFlight || isPollingExpired()) {
+                    if (isPollingExpired()) stopPolling();
+                    return;
+                  }
+                  pollInFlight = true;
+                  fetch('/order/<%= order.order_no %>/poll-status', {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    headers: { Accept: 'application/json' }
+                  }).then(function (resp) {
+                    if (!resp.ok) return null;
+                    return resp.json();
+                  }).then(function (data) {
+                    if (!data || !data.ok) return;
+                    if (data.paid || data.done) {
+                      stopPolling();
+                      refreshIfPaid();
+                    }
+                  }).catch(function () {
+                  }).finally(function () {
+                    pollInFlight = false;
+                    if (isPollingExpired()) {
+                      stopPolling();
+                    }
+                  });
+                }
+
+                function startPolling() {
+                  if (isPollingExpired()) return;
+                  if (!pollTimer) {
+                    pollOnce();
+                    pollTimer = setInterval(pollOnce, pollIntervalMs);
+                  }
+                }
+
+                function clearPaySessionMarks() {
+                  try {
+                    if (window.sessionStorage) {
+                      window.sessionStorage.removeItem(startKey);
+                      window.sessionStorage.removeItem(key);
+                    }
+                  } catch (_err) {}
+                }
+
+                function redirectHome() {
+                  window.location.href = '/';
+                }
+
+                function expireUnpaidAndBackHome() {
+                  if (expireHandled) return;
+                  expireHandled = true;
+                  stopPolling();
+                  clearPaySessionMarks();
+
+                  var done = false;
+                  function finish() {
+                    if (done) return;
+                    done = true;
+                    redirectHome();
+                  }
+
+                  var fallback = setTimeout(finish, 1500);
+                  fetch('/order/<%= order.order_no %>/expire-unpaid', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { Accept: 'application/json' }
+                  }).catch(function () {
+                  }).finally(function () {
+                    clearTimeout(fallback);
+                    finish();
+                  });
+                }
+
                 try {
                   if (window.sessionStorage && window.sessionStorage.getItem(key) === '1') {
                     enableCheckButton();
@@ -243,6 +339,7 @@
                         window.sessionStorage.setItem(key, '1');
                       }
                     } catch (_err) {}
+                    startPolling();
                   });
                 } else {
                   enableCheckButton();
@@ -254,6 +351,7 @@
                 }
 
                 startCountdown();
+                startPolling();
               })();
             </script>
           <% } else { %>
